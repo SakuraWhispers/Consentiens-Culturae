@@ -214,14 +214,13 @@ def _validate_inputs(
             f"raw_values keys {sorted(ids_in_values)} do not match concept ids {sorted(ids_expected)}"
         )
     for cid, values in raw_values.items():
-        unknown = set(values) - set(CRITERIA)
+        unknown = set(values) - set(SOFT_CRITERIA)
         if unknown:
-            raise ScoringInputError(f"unknown criterion keys for {cid}: {sorted(unknown)}")
-        scoreable = set(values) - {"C4"}  # C4 is gate-only; numeric C4 is not accepted
-        bad = scoreable - set(SOFT_CRITERIA)
-        if bad:
+            gate_note = (" C4 is gate-only: it has no weight and accepts no numeric input"
+                         if "C4" in unknown else "")
             raise ScoringInputError(
-                f"criterion keys {sorted(bad)} for {cid} are not scoreable; scoreable: {sorted(SOFT_CRITERIA)}"
+                f"unknown criterion keys for {cid}: {sorted(unknown)};"
+                f" scoreable criteria: {sorted(SOFT_CRITERIA)}.{gate_note}"
             )
 
 

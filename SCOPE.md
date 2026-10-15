@@ -130,3 +130,4 @@ Metrics: evidence traceability, unsupported-claim count, score-explanation consi
 Append-only. Newest entries at the bottom. Format: `YYYY-MM-DD | what changed | why | approved by`
 
 - 2026-10-15 | Initial scope written from handoff v1.0 | Establish gates and out-of-scope list before coding | human (solo developer)
+- 2026-10-15 | Hosted Postgres choice: Neon (fills the "optionally hosted on Supabase" slot in the stack) | Free-plan standard-Postgres, SQLAlchemy-compatible via DATABASE_URL; fits demo scale and judging window; human raised and approved | human (solo developer)

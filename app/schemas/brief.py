@@ -1,7 +1,10 @@
 """Decision brief input contract (SCOPE.md section 3, Input row).
 
 Category is fixed to the demo category; users never choose it.
-Weights are for the 5 criteria and must sum to 1 (architecture.md section 3.3).
+Weights cover the four soft criteria C1, C2, C3, C5 and must sum to 1
+(architecture.md section 3.3). C4 is a gate with NO weight (human decision
+2026-10-15): it never enters the weighted total, and a payload carrying a
+\"c4\" weight is rejected rather than silently discarded.
 """
 
 from typing import Literal
@@ -23,17 +26,22 @@ WEIGHT_SUM_TOLERANCE = 1e-3
 
 
 class Weights(BaseModel):
-    """User weights over the 5 criteria. Must each be >= 0 and sum to 1."""
+    """User weights over the four soft criteria. Each >= 0, sum = 1.
+
+    extra="forbid" guarantees no hidden input: a submitted c4 key is rejected,
+    not ignored. C4 (constraint feasibility) is checked as a pass/fail gate.
+    """
+
+    model_config = {"extra": "forbid"}
 
     c1: float = Field(ge=0.0, le=1.0, description="Cultural affinity alignment")
     c2: float = Field(ge=0.0, le=1.0, description="Differentiation")
     c3: float = Field(ge=0.0, le=1.0, description="Market-context relevance")
-    c4: float = Field(ge=0.0, le=1.0, description="Constraint feasibility (gate)")
     c5: float = Field(ge=0.0, le=1.0, description="Evidence coverage")
 
     @model_validator(mode="after")
     def _sums_to_one(self) -> "Weights":
-        total = self.c1 + self.c2 + self.c3 + self.c4 + self.c5
+        total = self.c1 + self.c2 + self.c3 + self.c5
         if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
             raise ValueError(
                 f"weights must sum to 1 (got {total:.6f})"
@@ -41,7 +49,7 @@ class Weights(BaseModel):
         return self
 
     def as_dict(self) -> dict[str, float]:
-        return {"C1": self.c1, "C2": self.c2, "C3": self.c3, "C4": self.c4, "C5": self.c5}
+        return {"C1": self.c1, "C2": self.c2, "C3": self.c3, "C5": self.c5}
 
 
 class HardConstraint(BaseModel):

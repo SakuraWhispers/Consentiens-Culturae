@@ -14,6 +14,9 @@ dependencies = [
     "httpx==0.27.*",
     # SQLAlchemy: persistence (decision_runs, evidence_records, workflow_events, ...)
     "sqlalchemy==2.0.*",
+    # psycopg: Postgres driver for SQLAlchemy (hosted Postgres: Neon, decision
+    # log 2026-10-15). SQLite stays the local default via DATABASE_URL.
+    "psycopg[binary]==3.2.*",
 ]
 
 [project.optional-dependencies]

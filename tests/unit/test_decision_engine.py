@@ -15,8 +15,10 @@ from app.services.decision_engine import (
 )
 
 
-def weights(c1=0.3, c2=0.2, c3=0.2, c4=0.1, c5=0.2) -> Weights:
-    return Weights(c1=c1, c2=c2, c3=c3, c4=c4, c5=c5)
+def weights(c1=0.4, c2=0.2, c3=0.2, c5=0.2) -> Weights:
+    # C4 is gate-only and has NO weight (human decision 2026-10-15):
+    # the user sets weights for the four soft criteria only.
+    return Weights(c1=c1, c2=c2, c3=c3, c5=c5)
 
 
 def raw_values(**overrides) -> dict[str, dict[str, float | None]]:
@@ -34,14 +36,22 @@ def raw_values(**overrides) -> dict[str, dict[str, float | None]]:
 class TestWeightValidation:
     def test_weights_must_sum_to_one(self):
         with pytest.raises(ValidationError):
-            weights(c1=0.5, c2=0.5, c3=0.5, c4=0.1, c5=0.2)
+            weights(c1=0.5, c2=0.5, c3=0.5, c5=0.2)  # sums to 1.7
 
     def test_negative_weight_rejected(self):
         with pytest.raises(ValidationError):
             weights(c2=-0.2)
 
+    def test_c4_field_does_not_exist(self):
+        # no hidden input: a payload carrying a C4 weight is rejected at the gate
+        with pytest.raises(ValidationError):
+            Weights(c1=0.4, c2=0.2, c3=0.2, c5=0.2, c4=0.0)
+
+    def test_weights_cover_only_soft_criteria(self):
+        assert set(Weights(c1=0.4, c2=0.2, c3=0.2, c5=0.2).as_dict()) == {"C1", "C2", "C3", "C5"}
+
     def test_tolerance_accepts_rounding_drift(self):
-        w = Weights(c1=0.3, c2=0.2, c3=0.2, c4=0.1, c5=0.2)
+        w = Weights(c1=0.4, c2=0.2, c3=0.2, c5=0.2)
         assert abs(sum(w.as_dict().values()) - 1.0) <= 1e-3
 
 
@@ -142,7 +152,7 @@ class TestScoring:
         # zero weights everywhere except C2/C3 which are equal: total ties for A/B
         results = score_concepts(
             concept_ids=["A", "B", "C"],
-            weights=weights(c1=1.0, c2=0.0, c3=0.0, c4=0.0, c5=0.0),
+            weights=weights(c1=1.0, c2=0.0, c3=0.0, c5=0.0),
             raw_values=values,
             hard_constraints=[],
             scoring_version="v0.1-test",
@@ -184,6 +194,19 @@ class TestScoring:
                 hard_constraints=[],
                 scoring_version="v0.1-test",
             )
+
+    def test_c4_in_raw_values_rejected_as_hidden_input(self):
+        values = raw_values()
+        values["A"]["C4"] = 1.0  # a numeric C4 must be an error, never silently discarded
+        with pytest.raises(ValueError) as err:
+            score_concepts(
+                concept_ids=["A", "B", "C"],
+                weights=weights(),
+                raw_values=values,
+                hard_constraints=[],
+                scoring_version="v0.1-test",
+            )
+        assert "C4" in str(err.value)
 
     def test_unknown_criterion_key_rejected(self):
         values = raw_values()
