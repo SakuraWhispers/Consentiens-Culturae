@@ -3,7 +3,7 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-15 (session 01)
+Last updated: 2026-10-15 (session 01, second pass)
 
 ---
 
@@ -12,11 +12,20 @@ Last updated: 2026-10-15 (session 01)
 - **Date now:** 2026-10-15
 - **Current gate:** G0 + G1, both dated Oct 16. Status: OPEN.
 - **Qloo API key:** requested, NOT yet obtained. All work runs in fixture/offline mode until it arrives.
-- **What exists:** offline skeleton (schemas, decision_engine with tests, state machine, config) + scripts/qloo_smoke_test.py ready for the moment the key lands.
+- **What exists:** offline skeleton, tests passing.
+  - `pyproject.toml` (pinned deps; pydantic bumped to 2.12.* for Python 3.14 wheels — only Python on this machine)
+  - `app/schemas/`: `brief.py` (DecisionBrief, Weights, HardConstraint), `concept.py`, `scoring.py`
+  - `app/services/decision_engine.py`: deterministic scoring, ranks, gates, coverage
+  - `app/workflow/`: `states.py`, `transitions.py` (typed state table)
+  - `app/config.py`: env-based settings, fixture-mode default, live-mode startup check
+  - `scripts/qloo_smoke_test.py`: G1 spike, ready for the key; verified the no-key path
+  - `sessions/SESSION_LOG.md` (this file), `.env.example` (placeholders only)
+- **Tests:** `pip install -e ".[dev]"` then `pytest` → **25 passed** (live tests: 25 deselected, marked, run manually with a key). Run with `.venv/Scripts/python.exe -m pytest` on this machine.
 - **NOT yet verified against live Qloo:** everything. qloo-api-notes.md has zero VERIFIED entries.
+- **NOT yet built:** Qloo client/adapter/normalizer (blocked on G1 response shapes), analyst/critic, sensitivity engine, persistence, API routes, frontend (Phase 4).
 - **Human decisions so far:** single rolling context file (this one); agent commits only when the human asks; build offline skeleton + smoke test in parallel while key is pending.
 - **Open question awaiting human answer:** whether C4 counts in the weighted total when the user lists no hard constraints (see session 01).
-- **Next action:** run the G1 spike (python scripts/qloo_smoke_test.py) as soon as the key arrives, then record results in qloo-api-notes.md.
+- **Next action:** human runs `QLOO_API_KEY=... .venv/Scripts/python.exe scripts/qloo_smoke_test.py --save-fixture tests/fixtures/fixture_search_success.json`, then we record results in qloo-api-notes.md (G1).
 
 Workflow conventions for every session:
 1. Append a numbered session entry below (newest first) at end of session.

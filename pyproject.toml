@@ -7,8 +7,9 @@ license = { file = "LICENSE" }
 dependencies = [
     # FastAPI: HTTP layer (app/api)
     "fastapi==0.115.*",
-    # Pydantic v2: all input/output contracts
-    "pydantic==2.9.*",
+    # Pydantic v2: all input/output contracts (2.12 for cp314 wheels; 3.14 is
+    # the only Python on this machine)
+    "pydantic==2.12.*",
     # httpx: async HTTP client for the Qloo adapter and the LLM provider
     "httpx==0.27.*",
     # SQLAlchemy: persistence (decision_runs, evidence_records, workflow_events, ...)

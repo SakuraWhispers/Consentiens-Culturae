@@ -186,22 +186,15 @@ def score_concepts(
     #    then concept_id lexicographic (architecture.md section 3.3).
     ranked = [r for r in results if r.status == "RANKED"]
     ranked.sort(key=lambda r: _rank_key(r, normalized))
-    seen_totals: list[float] = []
     for position, r in enumerate(ranked, start=1):
         r.rank = position
-        duplicates = [
-            other
-            for other in ranked
-            if other is not r and _total_key(other, normalized) == _total_key(r, normalized)
-        ]
-        if duplicates and position == 1 + [x.concept_id for x in ranked].index(r.concept_id):
-            pass  # marker only; handled below
-        seen_totals.append(r.weighted_total or 0.0)
 
-    # Annotate tie breaks: any ranked concept whose (-total) equals another's.
+    # Annotate tie breaks: any ranked concept whose pre-tie-break key
+    # (-total, -C1, -C5) equals another's was disambiguated by concept_id.
     for r in ranked:
+        pre_key = _rank_key(r, normalized)[:-1]
         others = [o for o in ranked if o is not r]
-        if any(_rank_key(o, normalized) == _rank_key(r, normalized) for o in others):
+        if any(_rank_key(o, normalized)[:-1] == pre_key for o in others):
             r.tie_broken_by = "total tie: broken by C1, then C5, then concept_id"
 
     results.sort(key=lambda r: (r.rank is None, r.rank if r.rank is not None else 0, r.concept_id))

@@ -129,7 +129,8 @@ class TestScoring:
         by_id = {r.concept_id: r for r in results}
         assert by_id["A"].status == "INSUFFICIENT_EVIDENCE"
         assert by_id["A"].rank is None
-        assert insuff_concept := by_id["A"].insufficient_reason
+        insuff_concept = by_id["A"].insufficient_reason
+        assert insuff_concept
         assert "coverage" in insuff_concept
 
     def test_tie_broken_by_c1_then_c5_then_id(self):
@@ -146,11 +147,15 @@ class TestScoring:
             hard_constraints=[],
             scoring_version="v0.1-test",
         )
-        # C1 raw equal among A and B -> min_max makes them exactly equal -> rank tie
+        # C wins outright (raw 60). A and B tie exactly under min-max and the
+        # zero-weighted C5; the tie-break falls through to concept_id lex order.
         by_id = {r.concept_id: r for r in results}
-        assert by_id["A"].rank == 1 and by_id["B"].rank == 2
+        assert by_id["C"].rank == 1
+        assert by_id["A"].rank == 2
+        assert by_id["B"].rank == 3
         assert by_id["A"].tie_broken_by is not None
-        assert "concept_id" in by_id["A"].tie_broken_by or "C5" in by_id["A"].tie_broken_by
+        assert by_id["B"].tie_broken_by is not None
+        assert by_id["C"].tie_broken_by is None
 
     def test_reproducibility_same_inputs_same_output_ten_runs(self):
         outputs = []
