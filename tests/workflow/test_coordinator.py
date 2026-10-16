@@ -85,3 +85,41 @@ def test_reproducibility_ten_runs_same_output() -> None:
     for _ in range(9):
         out = run_decision(eng, _brief(), src, scoring_version=SCORING_VERSION)
         assert [(r["concept_id"], r["rank"], r["weighted_total"]) for r in out["report"]["ranks"]] == pertama
+
+
+class _SharedPayloadSource:
+    """Stub: one shared insights payload attached to every concept (live shape)."""
+
+    is_live = False
+    tag_urn = "urn:tag:mock:shared"
+
+    def load(self, endpoint: str, params: dict[str, str]):
+        from app.integrations.qloo_adapter import QlooPayload
+
+        entity = {
+            "name": "Mock Shared",
+            "entity_id": "SHARED-ENTITY-ID",
+            "popularity": 0.5,
+            "tags": [{"tag_id": "urn:tag:mock:s"}],
+            "types": ["urn:entity:place"],
+        }
+        if endpoint == "search":
+            body = {"results": [dict(entity, name="Mock X", entity_id=f"E-{params.get('query', '?')}")]}
+        else:
+            body = {"success": True, "results": {"entities": [entity]}}
+        return QlooPayload(
+            endpoint=endpoint,
+            query_params_redacted=dict(params),
+            payload=body,
+            source="fixture",
+            fixture_mode=True,
+        )
+
+
+def test_shared_market_evidence_gets_concept_scoped_ids() -> None:
+    eng = _engine()
+    out = run_decision(eng, _brief(), _SharedPayloadSource(), scoring_version=SCORING_VERSION)
+    assert out["state"] in ("COMPLETED", "COMPLETED_WITH_LIMITATIONS")
+    bundle = get_run_bundle(eng, out["run_id"])
+    ids = [e["evidence_id"] for e in bundle["evidence"]]
+    assert len(ids) == len(set(ids))

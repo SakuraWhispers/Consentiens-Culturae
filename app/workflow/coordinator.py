@@ -46,22 +46,23 @@ def _move(engine: Engine, run_id: str, seq: int, current: RunState, target: RunS
     return nxt, seq
 
 
-def _plan_calls(brief: DecisionBrief, source: EvidenceSource) -> list[tuple[str, str, dict[str, str]]]:
-    """Deterministic retrieval plan: one search per concept, plus one insights
-    call on the concept tag when the source knows a tag URN (live only)."""
-    calls: list[tuple[str, str, dict[str, str]]] = []
+def _plan_calls(brief: DecisionBrief, source: EvidenceSource) -> list[tuple[str | None, str, dict[str, str]]]:
+    """Deterministic retrieval plan: one search per concept (concept evidence),
+    plus ONE shared insights call on the concept tag (market evidence, attached
+    to every concept). Shared market evidence is semantically honest: C3 market
+    relevance is market-level, and one call costs 1 quota instead of 3."""
+    calls: list[tuple[str | None, str, dict[str, str]]] = []
     for concept in brief.concepts:
         calls.append((concept.concept_id, "search", {"query": concept.name}))
     tag_urn = getattr(source, "tag_urn", None)
     if tag_urn:
-        for concept in brief.concepts:
-            calls.append(
-                (
-                    concept.concept_id,
-                    "insights",
-                    {"filter.type": "urn:entity:place", "filter.tags": tag_urn},
-                )
+        calls.append(
+            (
+                None,
+                "insights",
+                {"filter.type": "urn:entity:place", "filter.tags": tag_urn},
             )
+        )
     return calls
 
 
@@ -93,7 +94,8 @@ def run_decision(
 
     records_by_concept: dict[str, list[EvidenceRecord]] = {c.concept_id: [] for c in brief.concepts}
     fixture_flags: list[bool] = []
-    for concept_id, endpoint, params in _plan_calls(brief, source):
+    concept_names = {c.concept_id: c.name for c in brief.concepts}
+    for owner_id, endpoint, params in _plan_calls(brief, source):
         if getattr(source, "is_live", False):
             live_calls += 1
             if live_calls > max_live_calls:
@@ -105,30 +107,34 @@ def run_decision(
             limitations.append(f"{endpoint} unavailable in fixture mode: {exc}")
             continue
         except QlooError as exc:
-            records_by_concept[concept_id].append(
-                make_error_record(
-                    endpoint_or_operation=endpoint,
-                    query_params_redacted=params,
-                    error_code=exc.code,  # type: ignore[arg-type]
-                    source="qloo" if getattr(source, "is_live", False) else "fixture",
-                    fixture_mode=not getattr(source, "is_live", False),
-                    limitations=[exc.message_safe or "Qloo call failed"],
+            targets = [owner_id] if owner_id is not None else list(records_by_concept)
+            for target in targets:
+                records_by_concept[target].append(
+                    make_error_record(
+                        endpoint_or_operation=endpoint,
+                        query_params_redacted=params,
+                        error_code=exc.code,  # type: ignore[arg-type]
+                        source="qloo" if getattr(source, "is_live", False) else "fixture",
+                        fixture_mode=not getattr(source, "is_live", False),
+                        limitations=[exc.message_safe or "Qloo call failed"],
+                    )
                 )
-            )
             continue
-        intended = next(c.name for c in brief.concepts if c.concept_id == concept_id)
-        recs = normalize_response(payload, intended_name=intended)
-        records_by_concept[concept_id].extend(recs)
+        targets = [owner_id] if owner_id is not None else list(records_by_concept)
+        for target in targets:
+            recs = normalize_response(payload, intended_name=concept_names[target])
+            records_by_concept[target].extend(recs)
         fixture_flags.append(payload.fixture_mode)
 
     for concept_id, recs in records_by_concept.items():
         for rec in recs:
-            # Run-scope the deterministic ID up front: same evidence in two runs
+            # Run- AND concept-scope the deterministic ID up front: shared
+            # market evidence attached to several concepts (and any repeat run)
             # must not collide on the evidence_records primary key, and claims
             # must cite the persisted IDs. Scores are unaffected (IDs are
             # provenance, not score inputs).
             rec.evidence_id = stable_evidence_id(
-                f"{rec.endpoint_or_operation}#{run_id}",
+                f"{rec.endpoint_or_operation}#{run_id}#{concept_id}",
                 rec.query_params_redacted,
                 rec.qloo_entity_id,
             )

@@ -3,7 +3,7 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (session 07; sessions 04–06 logged below)
+Last updated: 2026-10-16 (session 08; sessions 04–07 logged below)
 
 ---
 
@@ -21,14 +21,19 @@ Last updated: 2026-10-16 (session 07; sessions 04–06 logged below)
 
 ## Sessions (newest first)
 
+### Session 08 — 2026-10-16 — G2 LIVE CONFIRM passed on real Qloo evidence
+
+- Live run defects, both fixed and test-locked: (1) per-concept insights calls used identical params → same 20 entities ×3, duplicate scoped IDs → Neon UNIQUE violation mid-run (40 real records retrieved, persist failed); fixed with ONE shared insights call + concept-scoped IDs. (2) Added `test_shared_market_evidence_gets_concept_scoped_ids` (stub shared payload → all persisted IDs unique). Suite: 60 → **61 passed**.
+- Live confirm (approved brief, Neon, 4 calls: 3 search + 1 shared insights): `COMPLETED_WITH_LIMITATIONS`, `fixture_mode=False`, winner **C (73.8) > A (67.5)**, B `INFEASIBLE` (gate works on live path), 40 hits/concept, 2 limitations (1 partial-coverage entity + G4 deferral), 0 critic findings. Live evidence differentiates concepts (fixture path tied at 60.0).
+- G2 ACCEPTANCE MET: brief + 3 concepts → real Qloo evidence → normalized records → deterministic ranking → persisted report; 10-run reproducibility green on fixtures. One orphan run row (interrupted persist) sits at ROBUSTNESS_ANALYSIS on Neon — harmless, superseded.
+- G2 sign-off remaining: SCOPE.md gate line (needs human gate-pass confirmation per AGENTS.md §9).
+
 ### Session 07 — 2026-10-16 — G2 core built: client, extraction, coordinator, reproducibility
 
 - Tests-first: `tests/integration/test_qloo_client.py` (8: auth/429/5xx/timeout/non-JSON, retry counts), `tests/unit/test_criterion_extraction.py` (2: formula values + empty/error edges), `tests/workflow/test_coordinator.py` (2: fixture run ranks/gate/report/persistence; 10-run identical ranks + totals).
 - New modules: `app/integrations/qloo_client.py`, `app/services/criterion_extraction.py`, `app/workflow/coordinator.py`, `LiveEvidenceSource` in `qloo_adapter.py`. Each displaces nothing (retrieval/scoring/workflow rows); no new dependencies.
 - Fixture-run caveat: FixtureSource serves the same search file per concept, so A/C tied at 60.0 (tie-break by concept_id); live evidence differentiates fully. Labeled fixture mode throughout.
 - Decision choices section started in this file (running list, newest first).
-
-## Sessions (newest first)
 
 ### Session 06 — 2026-10-16 — Neon verified + persistence built (tests first)
 
@@ -74,28 +79,7 @@ Workflow conventions for every session:
 1. Append a numbered session entry below (newest first) at end of session.
 2. Update CURRENT STATE so it is true after the session.
 3. Never log QLOO_API_KEY or any secret here.
-4. Log every user-facing choice in Decision choices below (date | decision | alternatives | why | approved by).
-
----
-
-## Decision choices (running list; newest first)
-
-- 2026-10-16 | G2 runs persist to Neon (not SQLite) | SQLite local was recommended | durable hosted runs prove the deployed path early; network cost accepted | human
-- 2026-10-16 | G2 scope = coordinator + report JSON (no API routes, no UI today) | include-API / include-UI options | keep today's finish inside G2 acceptance (ranking + report + reproducibility) | human
-- 2026-10-16 | G2 evidence = fixture first, then one live confirm | live-only / fixture-only | deterministic build + 10-run test free, then real-path proof for ~7 quota calls | human
-- 2026-10-16 | G2 demo brief = agent-drafted stationery set, human approves before live run | human-supplied brief | unblocks code build while brief approval gates only the live run | human
-- 2026-10-16 | C2/C3 formula switcher + custom formulas DEFERRED (out of scope) | dropdown + freeform entry | breaks single-version cap + reproducibility; server-side custom formulas = code-execution hole | agent proposed, human to confirm
-- 2026-10-16 | Three C1 variants as cards REJECTED; one C1 (mean popularity) + rank/hit-count diagnostics | three live variants | SCOPE one-version cap + 10-run reproducibility fail with competing C1s | agent proposed, human to confirm
-- 2026-10-16 | Demographics = non-scored context only | scored demographic input | hard rule 10 + stereotyping risk + SCOPE out-of-scope | human
-- 2026-10-16 | Keep custom coordinator, no LangGraph | LangGraph wrapper / full graph | linear pipeline; framework pays off only with branching/checkpointing/fan-out we lack | agent proposed, human asked for research
-- 2026-10-16 | `QLOO_BASE_URL` env var (hackathon default) | keep hardcoded | base URL is config, not code; wrong-URL 401 trap documented | human
-- 2026-10-16 | Fixture policy: synthetic committable, recorded local-only | commit redacted recordings | Qloo terms forbid response data in public repo | human
-- 2026-10-15 | Neon for hosted Postgres | Supabase slot in stack | free-tier standard Postgres, SQLAlchemy-compatible | human
-- 2026-10-15 | C4 = weightless gate, `c4` weight rejected | C4 as fifth weight | gate double-counted as score; hidden-input risk | human
-
----
-
-## Sessions (newest first)
+4. Log every user-facing choice in Decision choices at the end of this file (date | decision | alternatives | why | approved by).
 
 ### Session 05 — 2026-10-16 — G2 started: normalizer live-shape fix (tests first)
 
@@ -144,3 +128,22 @@ Workflow conventions for every session:
 
 - Design decision used to unblock scoring before G1: decision_engine consumes per-concept normalized 0–100 criterion values (None = missing); evidence-to-criterion extraction waits for G1-verified response shapes.
 - Open question to human (answer in next session): SCOPE says weights for 5 criteria; architecture §3.2 says C4 is a gate-only when constraints are present. If the user lists NO hard constraints, should C4 be scored/weighted (and how, with no Qloo evidence to define "feasibility"), or dropped from the weighted total with renormalization? Buffy's current implementation answer: C4 always gate-only; when no constraints exist C4 weight is renormalized across C1/C2/C3/C5 and the report discloses it.
+
+---
+
+## Decision choices (running list; newest first)
+
+- 2026-10-16 | ONE shared insights call per run (market evidence attached to all concepts) | per-concept insights calls | identical params ×3 wasted quota and produced duplicate evidence IDs; C3 is market-level so sharing is semantically honest | agent (live-run defect), human approved brief
+- 2026-10-16 | Evidence IDs scoped by run + concept | run-only scope | shared payloads collided on the PK within one run | agent (live-run defect)
+- 2026-10-16 | G2 runs persist to Neon (not SQLite) | SQLite local was recommended | durable hosted runs prove the deployed path early; network cost accepted | human
+- 2026-10-16 | G2 scope = coordinator + report JSON (no API routes, no UI today) | include-API / include-UI options | keep today's finish inside G2 acceptance (ranking + report + reproducibility) | human
+- 2026-10-16 | G2 evidence = fixture first, then one live confirm | live-only / fixture-only | deterministic build + 10-run test free, then real-path proof for ~7 quota calls | human
+- 2026-10-16 | G2 demo brief = agent-drafted stationery set, human approves before live run | human-supplied brief | unblocks code build while brief approval gates only the live run | human
+- 2026-10-16 | C2/C3 formula switcher + custom formulas DEFERRED (out of scope) | dropdown + freeform entry | breaks single-version cap + reproducibility; server-side custom formulas = code-execution hole | agent proposed, human to confirm
+- 2026-10-16 | Three C1 variants as cards REJECTED; one C1 (mean popularity) + rank/hit-count diagnostics | three live variants | SCOPE one-version cap + 10-run reproducibility fail with competing C1s | agent proposed, human to confirm
+- 2026-10-16 | Demographics = non-scored context only | scored demographic input | hard rule 10 + stereotyping risk + SCOPE out-of-scope | human
+- 2026-10-16 | Keep custom coordinator, no LangGraph | LangGraph wrapper / full graph | linear pipeline; framework pays off only with branching/checkpointing/fan-out we lack | agent proposed, human asked for research
+- 2026-10-16 | `QLOO_BASE_URL` env var (hackathon default) | keep hardcoded | base URL is config, not code; wrong-URL 401 trap documented | human
+- 2026-10-16 | Fixture policy: synthetic committable, recorded local-only | commit redacted recordings | Qloo terms forbid response data in public repo | human
+- 2026-10-15 | Neon for hosted Postgres | Supabase slot in stack | free-tier standard Postgres, SQLAlchemy-compatible | human
+- 2026-10-15 | C4 = weightless gate, `c4` weight rejected | C4 as fifth weight | gate double-counted as score; hidden-input risk | human
