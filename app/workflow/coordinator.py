@@ -22,6 +22,7 @@ from app.schemas.evidence import EvidenceRecord, make_error_record, stable_evide
 from app.services.criterion_extraction import FORMULAS, extract_raw_values
 from app.services.decision_engine import score_concepts
 from app.services.evidence_normalizer import normalize_response
+from app.services.robustness import analyze_sensitivity
 from app.services.persistence import (
     add_critic_finding,
     add_evidence_records,
@@ -420,7 +421,6 @@ def run_decision(
 
     move(RunState.FINAL_VALIDATION)
     winner = next((s for s in scores if s.rank == 1), None)
-    limitations.append("sensitivity analysis deferred to G4")
     fixture_mode = bool(fixture_flags) and all(fixture_flags)
 
     report: dict[str, Any] = {
@@ -453,12 +453,21 @@ def run_decision(
         "explanation_template": not analyst_llm,
         "llm_written": analyst_llm or critic_llm,
         "analyst": {"llm_written": analyst_llm, "revision_count": revision_count},
-        "sensitivity": {"status": "deferred-to-G4"},
+        "sensitivity": {"status": "pending"},
         "disclaimer": "Early screening aid. Not a demand forecast.",
     }
 
     move(RunState.ROBUSTNESS_ANALYSIS)
-    terminal = RunState.COMPLETED_WITH_LIMITATIONS if report["limitations"] else RunState.COMPLETED
+    sensitivity = analyze_sensitivity(
+        concept_ids,
+        raw_values,
+        brief.constraints,
+        {c.concept_id: dict(c.attributes) for c in brief.concepts},
+        brief.weights,
+        scoring_version,
+    )
+    report["sensitivity"] = sensitivity
+    terminal = RunState.COMPLETED_WITH_LIMITATIONS if limitations else RunState.COMPLETED
     move(terminal)
     report["state"] = terminal.value
 

@@ -3,11 +3,26 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (session 11; Level B API built, sensitivity next per human order)
+Last updated: 2026-10-16 (session 12; build closed for the day — handoff below)
 
 ---
 
-## CURRENT STATE
+## CURRENT STATE — HANDOFF (end of day 2026-10-16; next human in charge tomorrow)
+
+- **Gates:** G0 done · G1 PASSED (live) · G2 PASSED (human sign-off, SCOPE.md updated) · G3 paths built, live LLM test pending key · G4 sensitivity BUILT + wired (this session).
+- **What was built (all tested, suite 80 green on `.venv` python):**
+  - Pipeline: brief → retrieval (fixture + live Qloo) → normalize (live shapes) → extract (single formulas + diagnostics) → score (gates, coverage, tie-break) → template/LLM claims → deterministic/LLM critic → ≤1 revision → sensitivity → persisted report.
+  - API: `GET /api/health`, `POST /api/decision-runs`, `GET /api/decision-runs/{id}` (`uvicorn --factory app.main:serve`).
+  - Live-verified: hackathon URL + key; `/search`, `/v2/tags`, `/v2/insights` shapes; live slice winner C 73.8 > A 67.5 (4 calls, B INFEASIBLE).
+  - Neon Postgres 18.6 pooled: 5 tables live; local default stays SQLite.
+- **What is LEFT to build:**
+  1. Minimal report UI (Level B last item; serves G2 exit fully) — static page served by FastAPI hitting the API above.
+  2. Live LLM test (needs `LLM_API_KEY` + `LLM_ENABLED=true`; OpenAI gpt-4o-mini picked; Gemini fallback possible) — then G3 sign-off.
+  3. 3-way evaluation (LLM-only vs Qloo+scoring vs full) — Level C item, design only.
+  4. Post-C extras, ALL parked: weight sandbox, run history, recompute endpoint (each needs explicit move-in).
+  5. G5 deployment, G6 freeze (README/LICENSE/demo script), submission.
+- **How to run:** `.venv` python ONLY (system python lacks deps): `.\.venv\Scripts\python.exe -m pytest -q` (80 tests, offline). Live: keys in gitignored `.env`, never in chat. Recorded fixtures in gitignored `tests/fixtures/recorded/`.
+- **Known issues:** one orphan Neon run row at ROBUSTNESS_ANALYSIS (interrupted persist, harmless); fixture path ties A/C at 60.0 (live evidence differentiates); suite takes ~25s (1000-scenario analysis inline).
 
 - **Date now:** 2026-10-16
 - **Current gate:** G2 PASSED (human sign-off; SCOPE.md gate line + decision log updated). G3 agent roles and critic due Oct 22 — agent paths built behind injectable hooks (session 10); live LLM test pending key.
@@ -26,6 +41,13 @@ Last updated: 2026-10-16 (session 11; Level B API built, sensitivity next per hu
 - **Next actions (in order):** 1) brief approval → live confirm on Neon 2) G2 sign-off + SCOPE gate line 3) sensitivity robustness.py (G4) 4) API routes 5) G3 agent wrappers.
 
 ## Sessions (newest first)
+
+### Session 12 — 2026-10-16 — G4 sensitivity built, wired, day closed with handoff
+
+- `app/services/robustness.py` (tests first, 6 tests): box sampling ±0.20 around user weights, hard cap 1000, fixed seed 20261016; top-rank frequency with the fixed permitted phrasing; rank ranges; pivotal criterion by max deviation on flips; gates enforced per replay (infeasible never wins); 3-vector named fallback. Zero LLM tokens, zero Qloo calls (replays frozen evidence).
+- Coordinator: `ROBUSTNESS_ANALYSIS` now runs real analysis into `report["sensitivity"`; "deferred to G4" limitation removed. Displaces nothing; no new dependency.
+- Suite: 74 → **80 passed**. CURRENT STATE rewritten as handoff (built vs left, run commands, known issues) for the next human.
+- `git status` check + commit left to human (agent never commits).
 
 ### Session 11 — 2026-10-16 — Level B API built (tests first)
 
