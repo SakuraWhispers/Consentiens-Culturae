@@ -1,10 +1,14 @@
 """Evidence normalizer (docs/architecture.md section 2, Stage 1/2).
 
-Reads ONLY fields documented in docs/qloo-api-notes.md section 3 (all
-DOCS-VERIFIED 2026-10-16):
-  top level: results.entities[]  (a "success" envelope)
-  entity:    name, entity_id, type, subtype, properties, tags[], popularity
-Unknown fields are skipped; they are not merged into `raw`.
+LIVE VERIFIED shapes (docs/qloo-api-notes.md section 3, G1 2026-10-16):
+  /search:       {"results": [entity, ...]}  (list, NOT results.entities)
+  /v2/insights:  {"success": bool, "results": {"entities": [...]}} (matches docs)
+  /v2/tags:      {"success": bool, "results": {"tags": [...]}} — a tag lookup,
+                 NOT evidence; the normalizer refuses it with a named error so a
+                 tag list can never become an evidence record.
+  entity fields: name, entity_id, popularity TOP-LEVEL 0–1 float (fallback:
+                 properties.popularity), tags[] with id OR tag_id OR value,
+                 subtype (fallback: types[0]), type. Unknown fields are skipped.
 Missing documented fields reduce coverage to `partial` with the missing field
 named in `limitations` — never silently dropped, never coerced to zero, never
 fabricated (AGENTS.md hard rule 1).
@@ -37,18 +41,33 @@ def _entity_from_result_entity(entity: dict[str, Any], intended_name: str | None
     entity_id = entity.get("entity_id")
     name = entity.get("name")
     subtype = entity.get("subtype")
+    if not isinstance(subtype, str):
+        # Live /search hits carry types[] (plural) with no subtype field.
+        types_obj = entity.get("types")
+        if isinstance(types_obj, list) and types_obj and isinstance(types_obj[0], str):
+            subtype = types_obj[0]
 
+    # Live VERIFIED: popularity is top-level; properties.popularity is fallback.
+    popularity = entity.get("popularity")
     props_obj = entity.get("properties")
     props = props_obj if isinstance(props_obj, dict) else {}
-    popularity = props.get("popularity") if isinstance(props, dict) else None
+    if popularity is None:
+        popularity = props.get("popularity") if isinstance(props, dict) else None
 
     tags_obj = entity.get("tags")
     tag_list = tags_obj if isinstance(tags_obj, list) else []
     tag_ids: list[str] = []
     malformed_tags = False
     for tag in tag_list:
-        if isinstance(tag, dict) and isinstance(tag.get("id"), str):
-            tag_ids.append(tag["id"])
+        # Live VERIFIED: tags carry tag_id/value; older docs said id. Accept all.
+        if isinstance(tag, dict):
+            for key in ("id", "tag_id", "value"):
+                val = tag.get(key)
+                if isinstance(val, str):
+                    tag_ids.append(val)
+                    break
+            else:
+                malformed_tags = True
         else:
             malformed_tags = True
 
@@ -138,14 +157,16 @@ def normalize_response(
 ) -> list[EvidenceRecord]:
     """Map one retrieval response into normalized EvidenceRecords.
 
-    The shape distinction between search and insights responses is not yet
-    verified live: documented entities (results.entities[]) look the same in
-    the onboarding examples for both, so one path covers both until G1 shows a
-    difference (only this file changes then).
+    Accepted top-level shapes (all LIVE VERIFIED 2026-10-16):
+      - {"results": [...]}                  — /search (list of entities)
+      - {"results": {"entities": [...]}}     — /v2/insights (also old synthetics)
+    A {"results": {"tags": [...]}} tag-lookup response is refused with
+    QLOO_MALFORMED_RESPONSE: tag lists are retrieval-planning input, never
+    evidence records.
 
     Error mapping (docs/qloo-api-notes.md section 5):
-      - no "results" object, no "results.entities" key, entities not a list,
-        entity not an object -> QLOO_MALFORMED_RESPONSE
+      - no "results" object, no entities list, entity not an object
+        -> QLOO_MALFORMED_RESPONSE
       - empty entities list -> QLOO_NO_MATCH, coverage_status="missing"
     """
     endpoint = payload.endpoint
@@ -173,16 +194,26 @@ def normalize_response(
         return error("QLOO_MALFORMED_RESPONSE", ["response body was not an object"])
 
     results = body.get("results")
-    if not isinstance(results, dict):
+    if isinstance(results, list):
+        # Live /search shape: results IS the entity list.
+        entities: Any = results
+        list_label = "results"
+    elif isinstance(results, dict):
+        if "tags" in results and "entities" not in results:
+            return error(
+                "QLOO_MALFORMED_RESPONSE",
+                ["tags lookup response has no entities: results.tags is not evidence; resolve tag IDs then call insights"],
+            )
+        if "entities" not in results:
+            return error(
+                "QLOO_MALFORMED_RESPONSE",
+                ["expected key missing from response: results.entities"],
+            )
+        entities = results["entities"]
+        list_label = "results.entities"
+    else:
         return error("QLOO_MALFORMED_RESPONSE", ["expected key missing from response: results"])
 
-    if "entities" not in results:
-        return error(
-            "QLOO_MALFORMED_RESPONSE",
-            ["expected key missing from response: results.entities"],
-        )
-
-    entities = results["entities"]
     if entities == []:
         return error(
             "QLOO_NO_MATCH",
@@ -193,7 +224,7 @@ def normalize_response(
     if not isinstance(entities, list):
         return error(
             "QLOO_MALFORMED_RESPONSE",
-            ["results.entities was not a list"],
+            [f"{list_label} was not a list"],
         )
 
     records: list[EvidenceRecord] = []
@@ -202,7 +233,7 @@ def normalize_response(
             records.extend(
                 error(
                     "QLOO_MALFORMED_RESPONSE",
-                    [f"results.entities[{index}] was not an object"],
+                    [f"{list_label}[{index}] was not an object"],
                 )
             )
             continue

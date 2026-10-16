@@ -18,6 +18,7 @@ from app.services.evidence_normalizer import normalize_response
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
 SYNTHETIC_SUCCESS = "fixture_search_synthetic_success.json"
+LIVE_SEARCH_SHAPE = "fixture_search_live_shape.json"
 ADV_MISSING = "fixture_adv_missing_fields.json"
 ADV_NO_MATCH = "fixture_adv_no_match.json"
 ADV_MALFORMED = "fixture_adv_malformed.json"
@@ -235,3 +236,69 @@ def test_fixture_source_loads_synthetic_search() -> None:
     assert payload.source == "fixture"
     assert payload.fixture_mode is True
     assert payload.payload["results"]["entities"]
+
+
+# ---------- normalizer: LIVE VERIFIED shapes (G1 2026-10-16) ----------
+
+
+def test_live_search_list_shape_maps_top_level_popularity_and_tag_ids() -> None:
+    records = _payload_records(LIVE_SEARCH_SHAPE, endpoint="search", intended_name="Mock Studio Gear")
+    assert len(records) == 2
+
+    first = records[0]
+    assert first.qloo_entity_id == "11111111-AAAA-BBBB-CCCC-DDDDDDDDDDDD"
+    assert first.entity_name == "Mock Studio Gear"
+    assert first.popularity == 0.9123
+    assert first.tags == ["urn:tag:mock:gear"]
+    assert first.match_quality == "exact"
+    assert first.coverage_status == "available"
+    assert first.limitations == []
+
+    second = records[1]
+    assert second.match_quality == "partial"
+    assert second.popularity == 0.314
+    assert second.tags == ["urn:tag:mock:other"]
+
+
+def test_live_insights_entities_shape_accepts_both_popularity_spots() -> None:
+    payload = QlooPayload(
+        endpoint="insights",
+        query_params_redacted={"filter.type": "urn:entity:place"},
+        payload={
+            "success": True,
+            "results": {
+                "entities": [
+                    {
+                        "name": "Mock Insights Place",
+                        "entity_id": "33333333-AAAA-BBBB-CCCC-DDDDDDDDDDDD",
+                        "popularity": 0.77,
+                        "type": "urn:entity:place",
+                        "subtype": "urn:entity:place",
+                        "properties": {},
+                        "tags": [{"tag_id": "urn:tag:mock:place", "value": "urn:tag:mock:place"}],
+                    }
+                ]
+            },
+        },
+        source="fixture",
+        fixture_mode=True,
+    )
+    records = normalize_response(payload, intended_name="Mock Insights Place")
+    assert len(records) == 1
+    assert records[0].popularity == 0.77
+    assert records[0].tags == ["urn:tag:mock:place"]
+    assert records[0].coverage_status == "available"
+
+
+def test_tags_lookup_shape_is_not_evidence() -> None:
+    payload = QlooPayload(
+        endpoint="tags",
+        query_params_redacted={"filter.query": "stationery"},
+        payload={"success": True, "results": {"tags": [{"id": "urn:tag:mock:x"}]}},
+        source="fixture",
+        fixture_mode=True,
+    )
+    records = normalize_response(payload)
+    assert len(records) == 1
+    assert records[0].error_code == "QLOO_MALFORMED_RESPONSE"
+    assert any("tags" in lim for lim in records[0].limitations)

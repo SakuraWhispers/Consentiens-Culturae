@@ -1,0 +1,268 @@
+"""Persistence (docs/architecture.md sections 2 and 7).
+
+SQLAlchemy 2.0, five tables, JSON columns, `create_all` for v1 (no migration
+framework). SQLite locally, Neon Postgres via DATABASE_URL (pooled URL at
+runtime). Never stores API keys or headers — query params arrive already
+redacted from the adapter/normalizer path.
+
+It displaces nothing on the in-scope table (persistence row). Net scope
+change: none. No new dependency (sqlalchemy + psycopg already pinned).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class DecisionRun(Base):
+    __tablename__ = "decision_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    state: Mapped[str] = mapped_column(String(64), default="CREATED")
+    input_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    final_report_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message_safe: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scoring_version: Mapped[str] = mapped_column(String(32))
+    workflow_version: Mapped[str] = mapped_column(String(32))
+    revision_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class EvidenceRow(Base):
+    __tablename__ = "evidence_records"
+
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), ForeignKey("decision_runs.run_id"))
+    source: Mapped[str] = mapped_column(String(16), default="fixture")
+    qloo_entity_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    endpoint_or_operation: Mapped[str] = mapped_column(String(200), default="")
+    query_params_redacted_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    match_quality: Mapped[str] = mapped_column(String(16), default="none")
+    coverage_status: Mapped[str] = mapped_column(String(16), default="missing")
+    fixture_mode: Mapped[bool] = mapped_column(default=True)
+
+
+class WorkflowEvent(Base):
+    __tablename__ = "workflow_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: uuid.uuid4().hex)
+    run_id: Mapped[str] = mapped_column(String(64), ForeignKey("decision_runs.run_id"))
+    sequence_number: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(64))
+    event_type: Mapped[str] = mapped_column(String(64))
+    safe_payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ScoreSnapshot(Base):
+    __tablename__ = "score_snapshots"
+
+    score_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: uuid.uuid4().hex)
+    run_id: Mapped[str] = mapped_column(String(64), ForeignKey("decision_runs.run_id"))
+    concept_id: Mapped[str] = mapped_column(String(128))
+    score_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    scoring_version: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CriticFinding(Base):
+    __tablename__ = "critic_findings"
+
+    finding_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: uuid.uuid4().hex)
+    run_id: Mapped[str] = mapped_column(String(64), ForeignKey("decision_runs.run_id"))
+    finding_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+def normalize_database_url(url: str) -> str:
+    """Accept Neon's `postgresql://`/`postgres://`; SQLAlchemy needs a driver."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    return url
+
+
+def get_engine(database_url: str) -> Engine:
+    return create_engine(normalize_database_url(database_url), pool_pre_ping=True)
+
+
+def init_db(engine: Engine) -> None:
+    Base.metadata.create_all(engine)
+
+
+def _session(engine: Engine) -> Session:
+    return sessionmaker(bind=engine, expire_on_commit=False)()
+
+
+def create_run(
+    engine: Engine,
+    input_json: dict[str, Any],
+    scoring_version: str,
+    workflow_version: str,
+) -> str:
+    if not input_json:
+        raise ValueError("input_json must not be empty")
+    run_id = uuid.uuid4().hex
+    with _session(engine) as s:
+        s.add(
+            DecisionRun(
+                run_id=run_id,
+                state="CREATED",
+                input_json=input_json,
+                scoring_version=scoring_version,
+                workflow_version=workflow_version,
+            )
+        )
+        s.commit()
+    return run_id
+
+
+def update_run_state(
+    engine: Engine,
+    run_id: str,
+    state: str,
+    final_report_json: dict[str, Any] | None = None,
+    error_code: str | None = None,
+    error_message_safe: str | None = None,
+) -> None:
+    with _session(engine) as s:
+        run = s.get(DecisionRun, run_id)
+        if run is None:
+            raise ValueError(f"unknown run_id {run_id}")
+        run.state = state
+        if final_report_json is not None:
+            run.final_report_json = final_report_json
+        if error_code is not None:
+            run.error_code = error_code
+        if error_message_safe is not None:
+            run.error_message_safe = error_message_safe
+        s.commit()
+
+
+def add_workflow_event(
+    engine: Engine,
+    run_id: str,
+    sequence_number: int,
+    state: str,
+    event_type: str,
+    safe_payload: dict[str, Any],
+) -> str:
+    with _session(engine) as s:
+        ev = WorkflowEvent(
+            run_id=run_id,
+            sequence_number=sequence_number,
+            state=state,
+            event_type=event_type,
+            safe_payload_json=safe_payload,
+        )
+        s.add(ev)
+        s.commit()
+        return ev.event_id
+
+
+def add_evidence_records(
+    engine: Engine, run_id: str, records: list[dict[str, Any]]
+) -> None:
+    with _session(engine) as s:
+        for rec in records:
+            s.add(
+                EvidenceRow(
+                    evidence_id=rec.get("evidence_id") or uuid.uuid4().hex,
+                    run_id=run_id,
+                    source=rec.get("source", "fixture"),
+                    qloo_entity_id=rec.get("qloo_entity_id"),
+                    endpoint_or_operation=rec.get("endpoint_or_operation", ""),
+                    query_params_redacted_json=rec.get("query_params_redacted", {}),
+                    evidence_json={k: v for k, v in rec.items() if k != "evidence_id"},
+                    match_quality=rec.get("match_quality", "none"),
+                    coverage_status=rec.get("coverage_status", "missing"),
+                    fixture_mode=bool(rec.get("fixture_mode", True)),
+                )
+            )
+        s.commit()
+
+
+def add_score_snapshot(
+    engine: Engine, run_id: str, concept_id: str, score_json: dict[str, Any], scoring_version: str
+) -> str:
+    with _session(engine) as s:
+        row = ScoreSnapshot(
+            run_id=run_id, concept_id=concept_id, score_json=score_json, scoring_version=scoring_version
+        )
+        s.add(row)
+        s.commit()
+        return row.score_id
+
+
+def add_critic_finding(engine: Engine, run_id: str, finding_json: dict[str, Any]) -> str:
+    with _session(engine) as s:
+        row = CriticFinding(run_id=run_id, finding_json=finding_json)
+        s.add(row)
+        s.commit()
+        return row.finding_id
+
+
+def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
+    with _session(engine) as s:
+        run = s.get(DecisionRun, run_id)
+        if run is None:
+            raise ValueError(f"unknown run_id {run_id}")
+        return {
+            "run": {
+                "run_id": run.run_id,
+                "state": run.state,
+                "input_json": run.input_json,
+                "final_report_json": run.final_report_json,
+                "scoring_version": run.scoring_version,
+                "workflow_version": run.workflow_version,
+                "revision_count": run.revision_count,
+            },
+            "evidence": [
+                {"evidence_id": r.evidence_id, "qloo_entity_id": r.qloo_entity_id,
+                 "coverage_status": r.coverage_status, "match_quality": r.match_quality}
+                for r in s.query(EvidenceRow).filter_by(run_id=run_id).all()
+            ],
+            "scores": [
+                {"concept_id": r.concept_id, "score_json": r.score_json}
+                for r in s.query(ScoreSnapshot).filter_by(run_id=run_id).all()
+            ],
+            "events": [
+                {"sequence_number": e.sequence_number, "state": e.state, "event_type": e.event_type}
+                for e in s.query(WorkflowEvent).filter_by(run_id=run_id).order_by(WorkflowEvent.sequence_number).all()
+            ],
+            "critic": [r.finding_json for r in s.query(CriticFinding).filter_by(run_id=run_id).all()],
+        }
+
+
+__all__ = [
+    "Base",
+    "get_engine",
+    "normalize_database_url",
+    "init_db",
+    "create_run",
+    "update_run_state",
+    "add_workflow_event",
+    "add_evidence_records",
+    "add_score_snapshot",
+    "add_critic_finding",
+    "get_run_bundle",
+]

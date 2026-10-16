@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "fixture": true,
+    "source": "hand-written",
+    "recorded_at": "2026-10-16",
+    "redacted": true,
+    "note": "NO real Qloo data. Synthetic shape-mirror of the LIVE VERIFIED /search response (results list, top-level popularity, tag_id/value, types plural) for offline tests."
+  },
+  "request_params": {
+    "query": "Mock Studio Gear"
+  },
+  "response": {
+    "results": [
+      {
+        "name": "Mock Studio Gear",
+        "entity_id": "11111111-AAAA-BBBB-CCCC-DDDDDDDDDDDD",
+        "popularity": 0.9123,
+        "properties": {},
+        "tags": [
+          {"name": "MockTag", "tag_id": "urn:tag:mock:gear", "type": "urn:tag:mock", "value": "urn:tag:mock:gear"}
+        ],
+        "types": ["urn:entity:brand"],
+        "disambiguation": "Invented example"
+      },
+      {
+        "name": "Other Mock Place",
+        "entity_id": "22222222-AAAA-BBBB-CCCC-DDDDDDDDDDDD",
+        "popularity": 0.314,
+        "properties": {"popularity": 0.314},
+        "tags": [{"id": "urn:tag:mock:other", "name": "Other", "type": "urn:tag:mock"}],
+        "type": "urn:entity:place",
+        "subtype": "urn:entity:place"
+      }
+    ]
+  }
+}

@@ -3,15 +3,31 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (end of session 03)
+Last updated: 2026-10-16 (session 06; sessions 04–05 logged below)
 
 ---
 
 ## CURRENT STATE
 
 - **Date now:** 2026-10-16
-- **Current gate:** G0 + G1 dated Oct 16 (TODAY). G1's spike script is ready; the key has not arrived. G2 prep (fixture path) is now substantially built.
-- **Qloo API key:** requested, NOT yet received. All work runs in fixture/offline mode until it arrives.
+- **Current gate:** G1 PASSED live 2026-10-16 (hackathon URL + X-Api-Key VERIFIED; /search, /v2/tags, /v2/insights all 200). G2 thin vertical slice due Oct 19 — STARTED this session (normalizer live-shape fix done; persistence + coordinator path remain).
+- **Qloo API key:** RECEIVED and VERIFIED live (45-char key, placeholder replaced in local `.env` by human; values never logged). First spike run with placeholder 401'd as expected; second run with real key authenticated.
+- **QLOO_BASE_URL:** new env var (default `https://hackathon.api.qloo.com`), wired in `app/config.py` + `.env.example` + smoke script. `.env` scaffolded from example (placeholders, gitignored, not staged).
+- **LangGraph decision (human, session 04):** asked to add; agent researched (Devpost rules + 2026 framework consensus) and recommended KEEP custom coordinator — pipeline is linear, framework pays off only with branching/checkpointing/fan-out/HITL we don't need. Human asked for research response; no SCOPE change, no dependency added. Custom `states.py/transitions.py` stays.
+- **Demographics decision (human, session 04):** non-scored context ONLY (hard rule 10 + SCOPE out-of-scope for scored use retained). No code yet; renders as labeled context, never enters weights.
+- **G2 progress (session 05):** normalizer accepts LIVE shapes (`results` list for /search; `results.entities` for insights; top-level popularity + `properties` fallback; tag `id/tag_id/value`; `subtype` + `types[0]` fallback; `/v2/tags` lookup refused as non-evidence). New synthetic fixture `fixture_search_live_shape.json` + 3 tests. Suite 42 → **45 passed**.
+- **NOT yet built (G2 remainder):** persistence.py, qloo_client.py (shapes now VERIFIED — unblocked), coordinator run path (brief → evidence → ranking → run record), reproducibility test (10 runs), API routes, frontend.
+- **Next actions (in order):** 1) coordinator fixture-mode run path end-to-end (persistence DONE) 2) reproducibility test 3) qloo_client.py live adapter 4) sensitivity robustness.py 5) API routes after coordinator works.
+
+## Sessions (newest first)
+
+### Session 06 — 2026-10-16 — Neon verified + persistence built (tests first)
+
+- Human pasted Neon URL into local `.env` (value never printed; only scheme/length/pooled-flag checked). Advice given beforehand: pooled URL for runtime, unpooled aside for migrations; `postgresql://` verbatim, driver prefix handled in code.
+- Safe probe via project `.venv` (pinned SQLAlchemy 2.0.54 + psycopg 3.2.13; system python lacks them — all future runs use `.venv`): CONNECT OK, `PostgreSQL 18.6`, pooled. `init_db` created all 5 tables on Neon (`decision_runs, evidence_records, workflow_events, score_snapshots, critic_findings`).
+- Built `app/services/persistence.py` (tests first in `tests/integration/test_persistence.py`: prefix handling, full run lifecycle roundtrip, empty-input rejection). SQLAlchemy 2.0, JSON columns, `create_all` v1, secret-free by construction (params arrive redacted). Suite: 45 → **48 passed, 0 failed** (venv python).
+- It displaces nothing (persistence row). Net scope change: none. No new dependency.
+- `git status`: only intended files (`evidence_normalizer.py`, `SESSION_LOG.md`, new fixture, 2 test/module files); `.env` + `recorded/` ignored.
 - **Official docs fetched 2026-10-16 (all three):** base URL `https://hackathon.api.qloo.com` ONLY; `X-Api-Key` header; `/v2/insights` is GET with `filter.type` REQUIRED; supported entity types listed (brand/place/artist/...); `/recs` FORBIDDEN; invalid params are SILENTLY IGNORED (200 + empty entities can mean bad params OR no-match); full response returned (no field filtering); caching server-side OK no time limit; **Qloo response data must NOT go in a public repo**; keys active through end of judging. All recorded as DOCS-VERIFIED in `docs/qloo-api-notes.md` (§0 defines the label; live confirmation at G1 still required).
 - **GitHub starter kit:** NOT accessible from this host (github.com fetch blocked); web-search description only (CLI + MCP starter kit + separate OpenAPI-spec repo). Human to clone locally when possible; recorded as UNVERIFIED in the notes.
 - **What changed 2026-10-16 (session 03):**
@@ -53,6 +69,21 @@ Workflow conventions for every session:
 ---
 
 ## Sessions (newest first)
+
+### Session 05 — 2026-10-16 — G2 started: normalizer live-shape fix (tests first)
+
+- G1 follow-through: live spike showed our normalizer expected the DOCS shape (`results.entities`, `properties.popularity`, `tags[].id`) but live `/search` returns a `results` LIST with top-level `popularity`, `tag_id`/`value` tags, `types[]` plural. Wrote `tests/fixtures/fixture_search_live_shape.json` (hand-written, synthetic, labeled) + 3 tests first — 4 failures, all the expected gaps (fixture had `//` comments → invalid JSON; top-level popularity/tag_id unhandled; tags-lookup message).
+- Fixed `app/services/evidence_normalizer.py`: accepts `results` list (search) + `results.entities` (insights); popularity top-level with `properties` fallback; tag `id/tag_id/value`; `subtype` with `types[0]` fallback; `results.tags` lookup refused as non-evidence with a named error. Suite: 42 → **45 passed, 0 failed**.
+- It displaces nothing on the in-scope table (evidence normalization row). Net scope change: none. No new dependency.
+- Still to build for G2: persistence.py, coordinator run path, reproducibility test, qloo_client.py (now unblocked — shapes VERIFIED), API routes.
+
+### Session 04 — 2026-10-16 — G1 passed live: key verified, shapes recorded, LangGraph/demographics decided
+
+- Human provided server URL + real key in local `.env` (placeholder replaced by human; agent never printed/stored values — only lengths/shapes). First spike with placeholder 401'd (`API keys mismatch`) on all 8 probes; second run authenticated: hackathon base URL VERIFIED.
+- Live results: `/search?query=` 200 ×4 (20 hits each); `/v2/tags?filter.query=` 200 (`urn:tag:category:place:stationery_store`); insights `place + filter.tags` 200 (20 entities); insights `brand + same tag` 200 with 0 entities (genuine no-match); 1 timeout on `signal.interests.tags`. 3 redacted fixtures saved to gitignored `tests/fixtures/recorded/`.
+- `docs/qloo-api-notes.md`: 3 endpoint rows DOCS-VERIFIED → VERIFIED; behavior facts rewritten (explicit 400/401 shapes, top-level popularity, `tag_id`, `types[]`, rank-order + popularity instead of affinity score, no-match vs error); 3 verification-log lines; 6 open questions answered. `app/config.py` + `.env.example` + smoke script gained `QLOO_BASE_URL`.
+- Human decisions: LangGraph — agent researched and recommended keep-custom-coordinator (linear pipeline; framework pays off only with branching/checkpointing/fan-out); no SCOPE change, no dep added. Demographics — non-scored context only (hard rule 10 retained). Starter kit — not needed for G1.
+- Suite stayed **42 passed**. Commit policy: agent does not commit; human commits when ready.
 
 ### Session 03 — 2026-10-16 — docs fetched & verified, dotfile/policy cleanup, evidence layer built
 
