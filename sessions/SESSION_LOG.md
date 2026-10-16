@@ -3,14 +3,20 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (session 08; sessions 04–07 logged below)
+Last updated: 2026-10-16 (session 11; Level B API built, sensitivity next per human order)
 
 ---
 
 ## CURRENT STATE
 
 - **Date now:** 2026-10-16
-- **Current gate:** G1 PASSED live 2026-10-16 (hackathon URL + X-Api-Key VERIFIED; /search, /v2/tags, /v2/insights all 200). G2 thin vertical slice due Oct 19 — STARTED this session (normalizer live-shape fix done; persistence + coordinator path remain).
+- **Current gate:** G2 PASSED (human sign-off; SCOPE.md gate line + decision log updated). G3 agent roles and critic due Oct 22 — agent paths built behind injectable hooks (session 10); live LLM test pending key.
+- **LLM provider (agent pick, human delegated):** OpenAI `gpt-4o-mini` via `LLM_API_KEY` (`LLM_MODEL` override); httpx-only client, JSON-object mode, temp 0. Default OFF (`LLM_ENABLED=false`); missing key with flag on fails at startup check. Alternative: Gemini Flash (needs small client change) if human prefers Google.
+- **Richer claim schema (human chose richer):** base fields + `confidence` (high/medium/low) + `audience_context` (≤280 chars, non-scored labeled note only). Critic + validator updated for both.
+- **Level B vs C (human pasted handoff wording):** Level B = core + ONE API endpoint + minimal report UI, stable by Oct 19; exit = user submits 3 concepts → reproducible ranking with limitations, no agents required. Level C = B + agentic/analytical behavior (coordinator, 3 roles, ≤1 revision + fallback, sensitivity, 3-way evaluation), no new infrastructure. Cut C before shipping broken B.
+- **Scope impact:** our G2 passed on coordinator-report JSON, but Level B still misses the API endpoint + minimal UI — both move INTO the Oct 19 window. API routes were previously "after coordinator"; now next.
+- **Earlier agent-drafted extras renamed post-C (all parked):** weight sandbox (SCOPE-conditional), run history (out-of-scope), recompute endpoint (optional/out). Not scoped until B stable and C lands.
+- **Level C features:** human notes possible post-G2 differentiation work "if time permits" — meaning not yet defined; must ask what Level C is before scoping anything.
 - **Qloo API key:** RECEIVED and VERIFIED live (45-char key, placeholder replaced in local `.env` by human; values never logged). First spike run with placeholder 401'd as expected; second run with real key authenticated.
 - **QLOO_BASE_URL:** new env var (default `https://hackathon.api.qloo.com`), wired in `app/config.py` + `.env.example` + smoke script. `.env` scaffolded from example (placeholders, gitignored, not staged).
 - **LangGraph decision (human, session 04):** asked to add; agent researched (Devpost rules + 2026 framework consensus) and recommended KEEP custom coordinator — pipeline is linear, framework pays off only with branching/checkpointing/fan-out/HITL we don't need. Human asked for research response; no SCOPE change, no dependency added. Custom `states.py/transitions.py` stays.
@@ -20,6 +26,27 @@ Last updated: 2026-10-16 (session 08; sessions 04–07 logged below)
 - **Next actions (in order):** 1) brief approval → live confirm on Neon 2) G2 sign-off + SCOPE gate line 3) sensitivity robustness.py (G4) 4) API routes 5) G3 agent wrappers.
 
 ## Sessions (newest first)
+
+### Session 11 — 2026-10-16 — Level B API built (tests first)
+
+- New: `app/api/` (health + POST/GET decision-runs, thin over coordinator) and `app/main.py` (`create_app` factory; `serve()` for `uvicorn --factory`; import-safe, no network at import). Mode selects source: fixture → FixtureSource, live → LiveEvidenceSource + stationery tag.
+- Test caught: `RunDeps` as pydantic model rejects Protocol fields — plain holder class instead. 4 API tests (health, ranking report, 422 on 2 concepts, GET bundle + 404). Suite: 70 → **74 passed**.
+- It displaces nothing (API/UI rows). Net scope change: none. No new dependency (fastapi already pinned).
+- Per human order: sensitivity (G4) next, minimal UI last.
+
+### Session 10 — 2026-10-16 — G3 agent paths built (hooks, revision loop, fallbacks)
+
+- New: `app/agents/` (`schemas.py` RetrievalPlan/RichClaim/AnalysisDraft/CriticOutput + closed issue codes; `researcher.py` allowlist/budget validator + deterministic fallback; `prompts.py` with data-not-instructions clauses; `llm_client.py` httpx-only JSON client; `analyst.py` four LLM wrappers; `__init__.py`). Config: `LLM_ENABLED/PROVIDER/MODEL/TIMEOUT` + startup check; `.env.example` updated.
+- Coordinator: injectable `researcher_fn/analyst_fn/critic_fn/revise_fn` (retry-once → deterministic fallback + limitation each); revision capped at 1 with deterministic re-check; `revision_count` persisted; template claims upgraded to rich shape.
+- Defects caught by tests: (1) fully-rejected agent plan → empty evidence → scoring crash; fixed with deterministic-plan fallback + `FAILED_TERMINAL` guard when zero usable values (legal from NORMALIZING). (2) pydantic schema rejects off-allowlist/over-budget before code validators — kept as defense in depth, tests assert both layers.
+- Suite: 61 → **70 passed**. Live LLM test pending key (flag stays off; suite offline).
+- It displaces nothing (agent-role rows). Net scope change: none. No new dependency (httpx only).
+
+### Session 09 — 2026-10-16 — G2 signed off, G3 kickoff questions
+
+- Human passed G2 ("G2 pass for now") with a note: Level C features later if time permits (undefined — asked back). SCOPE.md G2 row → passed + decision-log line appended (header preserved after a mis-edit that dropped it; repaired and verified).
+- G3 questions sent (provider/model, researcher scope, schema reuse, revision caps, injected-defect pick, LLM flag, Level C meaning). Build starts on answers.
+- Suite untouched this session (61 passed last run).
 
 ### Session 08 — 2026-10-16 — G2 LIVE CONFIRM passed on real Qloo evidence
 
@@ -147,3 +174,10 @@ Workflow conventions for every session:
 - 2026-10-16 | Fixture policy: synthetic committable, recorded local-only | commit redacted recordings | Qloo terms forbid response data in public repo | human
 - 2026-10-15 | Neon for hosted Postgres | Supabase slot in stack | free-tier standard Postgres, SQLAlchemy-compatible | human
 - 2026-10-15 | C4 = weightless gate, `c4` weight rejected | C4 as fifth weight | gate double-counted as score; hidden-input risk | human
+- 2026-10-16 | G2 gate PASSED | hold open | acceptance evidence (live confirm + 10-run test) ran and recorded; human signed off | human
+- 2026-10-16 | G3 started via questions-first (no assumptions) | start building directly | researcher/analyst/critic need provider, scope, schema, budget answers first | human
+- 2026-10-16 | Empty-evidence runs → FAILED_TERMINAL (legal from NORMALIZING) + rejected-plan → deterministic fallback | crash / silent empty | scoring code cannot rank zero values; terminal-with-reason is the honest state | agent (test-caught defect)
+- 2026-10-16 | Deterministic critic also checks causal phrasing (CAUSAL_OVERCLAIM) | LLM-only causal check | injected-overclaim acceptance must hold even on the fallback path | agent
+- 2026-10-16 | Level B/C boundary from handoff recorded; API endpoint + minimal UI moved into Oct-19 window | keep prior G2 scope | handoff §20 exit gate requires them; cut C before broken B | human
+- 2026-10-16 | Level B closure order: API first, sensitivity (G4) next, UI last | API→UI / UI→API | sampler output feeds the UI chart; UI risk accepted near Oct 19 | human
+- 2026-10-16 | G3 answers: provider = agent picks (OPENAI_API_KEY); researcher LLM-plans/code-enforces; analyst RICHER schema; critic 1 pass + 1 revision with injected CAUSAL_OVERCLAIM; LLM flag-gated default-off; Level C = agent drafts candidate set | alternatives per question | unblock G3 build without assumptions | human

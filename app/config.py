@@ -19,6 +19,11 @@ class Settings:
     qloo_timeout_seconds: float = 10.0
     qloo_max_calls_per_run: int = 10
     insufficient_coverage_threshold: float = 0.5
+    # G3 agent roles: flag-gated, deterministic fallback is the default.
+    llm_enabled: bool = False
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o-mini"
+    llm_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -34,6 +39,10 @@ class Settings:
             insufficient_coverage_threshold=float(
                 _env("INSUFFICIENT_COVERAGE_THRESHOLD", "0.5") or 0.5
             ),
+            llm_enabled=(_env("LLM_ENABLED", "false") or "false").lower() == "true",
+            llm_provider=(_env("LLM_PROVIDER", "openai") or "openai").lower(),
+            llm_model=_env("LLM_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
+            llm_timeout_seconds=float(_env("LLM_TIMEOUT_SECONDS", "30") or 30),
         )
 
     def validate_for_mode(self) -> list[str]:
@@ -44,6 +53,8 @@ class Settings:
             problems.append(f"APP_MODE must be one of {known}, got '{self.app_mode}'")
         if self.app_mode == "live" and not _env("QLOO_API_KEY"):
             problems.append("APP_MODE=live requires QLOO_API_KEY in the environment")
+        if self.llm_enabled and not _env("LLM_API_KEY"):
+            problems.append("LLM_ENABLED=true requires LLM_API_KEY in the environment")
         return problems
 
 

@@ -158,6 +158,15 @@ def update_run_state(
         s.commit()
 
 
+def set_revision_count(engine: Engine, run_id: str, revision_count: int) -> None:
+    with _session(engine) as s:
+        run = s.get(DecisionRun, run_id)
+        if run is None:
+            raise ValueError(f"unknown run_id {run_id}")
+        run.revision_count = revision_count
+        s.commit()
+
+
 def add_workflow_event(
     engine: Engine,
     run_id: str,
@@ -265,4 +274,5 @@ __all__ = [
     "add_score_snapshot",
     "add_critic_finding",
     "get_run_bundle",
+    "set_revision_count",
 ]
