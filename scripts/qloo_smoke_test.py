@@ -33,12 +33,18 @@ except ImportError:  # pragma: no cover
 
 TIMEOUT_SECONDS = 10.0
 
-# Base URLs probed. The hackathon URL is the documented one; the other is kept
-# only to CONFIRM the documented 401-on-wrong-base-URL behavior once, cheaply.
-BASE_URL_CANDIDATES = [
-    "https://hackathon.api.qloo.com",
-    "https://api.qloo.com",
-]
+# Primary base URL comes from QLOO_BASE_URL (default: hackathon URL).
+# The second entry exists only to CONFIRM the documented 401-on-wrong-base-URL
+# behavior once, cheaply — never as a fallback for real evidence.
+def _base_url_candidates() -> list[str]:
+    primary = (os.environ.get("QLOO_BASE_URL") or "https://hackathon.api.qloo.com").rstrip("/")
+    candidates = [primary]
+    if primary != "https://api.qloo.com":
+        candidates.append("https://api.qloo.com")
+    return candidates
+
+
+BASE_URL_CANDIDATES = _base_url_candidates()
 
 ENDPOINT_CANDIDATES = [
     ("search", "/search", {"query": "{term}"}),

@@ -15,6 +15,7 @@ class Settings:
 
     app_mode: str = "fixture"  # "fixture" | "live"
     database_url: str = "sqlite:///./consentiens_culturae.db"
+    qloo_base_url: str = "https://hackathon.api.qloo.com"
     qloo_timeout_seconds: float = 10.0
     qloo_max_calls_per_run: int = 10
     insufficient_coverage_threshold: float = 0.5
@@ -24,6 +25,10 @@ class Settings:
         return cls(
             app_mode=(_env("APP_MODE", "fixture") or "fixture").lower(),
             database_url=_env("DATABASE_URL", "sqlite:///./consentiens_culturae.db") or "",
+            qloo_base_url=(
+                _env("QLOO_BASE_URL", "https://hackathon.api.qloo.com")
+                or "https://hackathon.api.qloo.com"
+            ).rstrip("/"),
             qloo_timeout_seconds=float(_env("QLOO_TIMEOUT_SECONDS", "10") or 10),
             qloo_max_calls_per_run=int(_env("QLOO_MAX_CALLS_PER_RUN", "10") or 10),
             insufficient_coverage_threshold=float(

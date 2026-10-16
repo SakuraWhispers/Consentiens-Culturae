@@ -47,20 +47,21 @@ Last updated: 2026-10-16. Current verification status: **endpoint facts DOCS-VER
 
 | Purpose | Endpoint (as documented) | Status | Verified by | Notes |
 |---|---|---|---|---|
-| Resolve entity names to Qloo entity IDs | `GET /search` | DOCS-VERIFIED 2026-10-16 | official hackathon guide | Accepted `types` values for `/search` are NOT the same as insights `filter.type` values — check the `/search` docs before calling. Test at G1. |
-| Resolve tags (genre, style, keywords) to tag IDs | `GET /v2/tags` (Tags Search API) | DOCS-VERIFIED 2026-10-16 | official hackathon guide | No static tag list exists; `/v2/tags` is the only way to find valid tag URNs. Freeform strings in `filter.tags` / `signal.interests.tags` fail ("at least one valid signal or filter is required"). |
-| Taste-based recommendations for one entity type | `GET /v2/insights` | DOCS-VERIFIED 2026-10-16 | official hackathon guide | `filter.type` REQUIRED on every insights call. Supported values: `urn:entity:artist`, `:book`, `:brand`, `:destination`, `:movie`, `:person`, `:place`, `:podcast`, `:tv_show`, `:video_game`. A 403 on an entity type means it is unsupported (e.g. there is no `urn:entity:music` — use `urn:entity:artist`). |
+| Resolve entity names to Qloo entity IDs | `GET /search` | VERIFIED 2026-10-16 (live) | G1 spike, `?query=stationery/Moleskine/LEGO/New York` → 200 | `results` is a LIST (not `results.entities`); 20 hits per call; entity keys `disambiguation, entity_id, location?, name, popularity (top-level 0–1 float), properties, tags, types[]`. `type/subtype` top-level ABSENT on /search hits (present on insights hits). Tags use `tag_id`/`value`, not `id`. Normalizer update required (G2). |
+| Resolve tags (genre, style, keywords) to tag IDs | `GET /v2/tags` (Tags Search API) | VERIFIED 2026-10-16 (live) | G1 spike, `?filter.query=stationery` → 200 | Correct param is `filter.query`, NOT `query` (`query` → 400 with `errors[].message` listing valid params). Shape: `results.tags[]` with `id/name/type/parents/popularity`. Hit: `urn:tag:category:place:stationery_store`. |
+| Taste-based recommendations for one entity type | `GET /v2/insights` | VERIFIED 2026-10-16 (live) | G1 spike, `filter.type=urn:entity:place + filter.tags=<stationery_store URN>` → 200, 20 entities | `filter.type` alone → 400 `at least one valid signal or filter is required`. Valid combo: `filter.tags` with a `/v2/tags`-resolved URN. Shape: `success/results.entities[]` (matches docs). `urn:entity:brand` + same tag → 200 with 0 entities (genuine no-match). One `signal.interests.tags` call timed out (QLOO_TIMEOUT observed, retry policy justified). |
 | Affinity by demographic (age, gender) | `GET /v2/insights` with demographic signals | DOCS-VERIFIED 2026-10-16 | official hackathon guide | **do not use as a scored input** (see SCOPE.md §4). `signal.demographics.audiences` requires audience URN values, not freeform strings. Included only so we know it exists. |
 | Tags describing the taste of an entity set, audience, or location | `GET /v2/insights` with tag/entity signals ("Taste Analysis") | DOCS-VERIFIED 2026-10-16 | official hackathon guide | Taste Analysis is a usage mode of the Insights API, not a separate endpoint. Candidate for C1 and C3 evidence. |
 | Legacy recommendations | `/recs`, `/recommendations` | FORBIDDEN | official hackathon guide | Do not call, not even as an experiment: "Do not use /recommendations or /recs. These are legacy endpoints and are not supported for the hackathon." |
 | Compare two entity groups | `Analysis Compare` | DOCS-VERIFIED (name) | API overview page | Exact path/params unknown; not needed for v1. Record only. |
 | Popularity over time | `Get Trending Data` | DOCS-VERIFIED (name) | API overview page | Exact path/params unknown; not needed for v1. Record only. |
 
-**Behavior facts the app must handle (all DOCS-VERIFIED 2026-10-16):**
-- Invalid or unsupported parameters are **silently ignored** — a 200 OK with an empty `results.entities` array can mean bad parameters OR a genuine no-match. The adapter must record both differently, and G1 must characterize which parameters our key accepts for our chosen `filter.type`.
-- Empty-result shape: `"success": true`-style envelope with `results.entities: []` (confirm exact keys at G1).
-- Successful entity objects carry `name`, `entity_id`, `type`, `subtype`, `properties`, `popularity` (0–1 float observed in the onboarding example), and `tags[]` with `id`/`name`/`type`.
-- Affinity value format in insights responses (numeric scale vs ranked order) still UNVERIFIED — this decides the normalization method in architecture §3.1.
+**Behavior facts (VERIFIED 2026-10-16 live unless noted):**
+- Errors are NOT silent: bad params → 400 with `errors[].message` (e.g. tags `query` → 400 listing valid `filter.*` params; insights `filter.type`-only → 400 `at least one valid signal or filter is required`). The old silent-ignore note stays DOCS-VERIFIED for other params.
+- Empty-result shape (VERIFIED): 200 `{"success": true, "results": {"entities": []}}` (brand + stationery-store tag → 0 entities). Distinguishable from 400 errors by status code. No-match is NOT a negative signal.
+- Entity shape correction (VERIFIED, supersedes the 2026-10-16 docs line): `/search` hits carry `popularity` TOP-LEVEL (0–1 float), `types[]` (plural), tags with `tag_id`/`value` (not `id`); `type`/`subtype` top-level absent on /search, present on insights hits. The normalizer must accept both.
+- Affinity format (VERIFIED 2026-10-16): NO numeric affinity/score field observed on insights entities (checked `affin*/score/rank` keys — absent). Ranking is list order + `popularity`. Normalization implication: C1/C3 use rank-order or popularity-based min–max across the run's concepts, not a fixed affinity scale. To be finalized in architecture §3.1 at G2.
+- 400 shape (VERIFIED): `{"errors": [{"message": ..., "path": ...}]}`. 401 shape (VERIFIED): `{"error": {"reason": "API keys mismatch", "message": "Unauthorized", "code": 401}}`.
 
 **Things we must learn at G1 for each endpoint:**
 - Is it available to the hackathon key at all?
@@ -164,17 +165,20 @@ Append-only. One line per verification. Format: `YYYY-MM-DD | what was checked |
 - 2026-10-16 | Official hackathon developer guide (docs.qloo.com/reference/qloo-llm-hackathon-developer-guide) | web fetch in full | base URL, X-Api-Key, GET-only insights, filter.type required + full supported entity-type list, /search vs /v2/insights separation, /recs forbidden, silent-ignore of invalid params, empty-result shape, quota/limits and Discord escalation, caching rules, public-repo data restriction, key lifetime | none
 - 2026-10-16 | Starter kit repository | web fetch + web search | github.com fetch blocked from dev host; description only via search: CLI + MCP starter kit; companion repo with OpenAPI spec | none
 - 2026-10-16 | Devpost FAQ (search result qloo-hackathon.devpost.com) | web search snippet | keys issued within ~4 hours of form submission | none
+- 2026-10-16 | G1 spike, first run with placeholder key | live calls via scripts/qloo_smoke_test.py | 8/8 → 401 `API keys mismatch`; confirmed auth path works, key was placeholder | none
+- 2026-10-16 | G1 spike, real key: base URL + auth | live `GET /search?query=stationery` → 200 | hackathon base URL + `X-Api-Key` VERIFIED; `api.qloo.com` 401 as documented | tests/fixtures/recorded/fixture_search_live_stationery.json (LOCAL-ONLY)
+- 2026-10-16 | G1 spike, real key: /search ×4, /v2/tags ×2, /v2/insights ×2 | live calls | /search 200 (20 hits each); /v2/tags 200 via `filter.query`; insights-place 200 (20 entities) via `filter.tags` URN; insights-brand 200 with 0 entities; 1 timeout on `signal.interests.tags` | tests/fixtures/recorded/fixture_tags_live_stationery.json, fixture_insights_place_stationery_store.json (LOCAL-ONLY)
 
 ---
 
 ## 10. Open questions for G1 (answer each, with date)
 
-1. Which endpoints does the hackathon key allow? (Test each DOCS-VERIFIED one in §3 — live confirmation required.)
-2. ~~What is the exact base URL and auth header?~~ **ANSWERED 2026-10-16 (docs)**: `https://hackathon.api.qloo.com` + `X-Api-Key` header.
-3. What is the rate limit, and what does a 429 look like? (Numbers unpublished; observe at G1.)
-4. Does the insights affinity signal come as a numeric scale, or only as a ranked list?
+1. ~~Which endpoints does the hackathon key allow?~~ **ANSWERED 2026-10-16 (live)**: `/search`, `/v2/tags`, `/v2/insights` all 200 with the hackathon key.
+2. ~~What is the exact base URL and auth header?~~ **ANSWERED 2026-10-16 (docs), VERIFIED live**: `https://hackathon.api.qloo.com` + `X-Api-Key` header.
+3. What is the rate limit, and what does a 429 look like? (Numbers unpublished; no 429 observed at G1 — ~10 sequential calls fine. Stays UNVERIFIED.)
+4. ~~Does the insights affinity signal come as a numeric scale, or only as a ranked list?~~ **ANSWERED 2026-10-16 (live)**: ranked list order + top-level `popularity` 0–1; no affinity/score field on entities.
 5. Can a query be restricted to a city or market? (Location/geo parameters are documented in the overview; test which are valid for our entity type.)
-6. What are valid entity types and tag IDs for stationery and creative accessories? (Likely `urn:entity:brand` / `urn:entity:place` + tags resolved via `/v2/tags`.)
-7. What does a no-match response look like? (~200 OK with empty entities array; confirm exact keys.)
-8. What is the response size for a typical call? (Onboarding example is verbose — `akas`, tags; affects fixture size and latency.)
-9. Does the starter kit contain a client or schema we should reuse? (Reuse only if it fits the adapter boundary.)
+6. ~~What are valid entity types and tag IDs for stationery and creative accessories?~~ **ANSWERED 2026-10-16 (live)**: `urn:tag:category:place:stationery_store` (+ genre variant) resolves via `filter.query=stationery`; `filter.type=urn:entity:place + filter.tags=<that URN>` → 20 hits; same tag with `urn:entity:brand` → 0 hits.
+7. ~~What does a no-match response look like?~~ **ANSWERED 2026-10-16 (live)**: 200 `{"success": true, "results": {"entities": []}}` — distinct from 400 `{"errors": [...]}`.
+8. What is the response size for a typical call? (PARTIAL 2026-10-16 live: 20 entities per call by default; verbose `tags/properties/references`; `limit` param max still UNVERIFIED.)
+9. Does the starter kit contain a client or schema we should reuse? (Human decision 2026-10-16: not needed for G1; web-search only if blocked. Reuse only if it fits the adapter boundary.)
