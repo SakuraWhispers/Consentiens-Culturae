@@ -70,6 +70,8 @@ def load_fixture_file(path: Path) -> dict[str, Any]:
 class FixtureSource:
     """Serves pre-approved synthetic fixture payloads (offline everywhere)."""
 
+    is_live = False
+
     def __init__(self, fixtures_dir: Path = FIXTURES_DIR) -> None:
         self._dir = fixtures_dir
 
@@ -98,3 +100,34 @@ class FixtureSource:
 
 
 __all__ = ["QlooPayload", "EvidenceSource", "FixtureSource", "FixtureError", "load_fixture_file"]
+
+
+class LiveEvidenceSource:
+    """Live Qloo calls behind the EvidenceSource protocol (G1 VERIFIED shapes).
+
+    Allowlist: "search" and "insights" only. Anything else raises ValueError
+    before any network call. QlooError propagates to the coordinator, which
+    turns it into an error record (never an empty result, never a score).
+    """
+
+    is_live = True
+
+    _PATHS = {"search": "/search", "insights": "/v2/insights"}
+
+    def __init__(self, client: Any, tag_urn: str | None = None) -> None:
+        self._client = client
+        self.tag_urn = tag_urn
+        self.calls_made = 0
+
+    def load(self, endpoint: str, params: dict[str, str]) -> QlooPayload:
+        if endpoint not in self._PATHS:
+            raise ValueError(f"endpoint {endpoint!r} is not on the Qloo allowlist")
+        self.calls_made += 1
+        resp = self._client.get(self._PATHS[endpoint], params)
+        return QlooPayload(
+            endpoint=endpoint,
+            query_params_redacted=dict(params),
+            payload=resp.body,
+            source="qloo",
+            fixture_mode=False,
+        )

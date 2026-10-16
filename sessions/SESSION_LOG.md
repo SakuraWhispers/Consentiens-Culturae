@@ -3,7 +3,7 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (session 06; sessions 04–05 logged below)
+Last updated: 2026-10-16 (session 07; sessions 04–06 logged below)
 
 ---
 
@@ -15,9 +15,18 @@ Last updated: 2026-10-16 (session 06; sessions 04–05 logged below)
 - **QLOO_BASE_URL:** new env var (default `https://hackathon.api.qloo.com`), wired in `app/config.py` + `.env.example` + smoke script. `.env` scaffolded from example (placeholders, gitignored, not staged).
 - **LangGraph decision (human, session 04):** asked to add; agent researched (Devpost rules + 2026 framework consensus) and recommended KEEP custom coordinator — pipeline is linear, framework pays off only with branching/checkpointing/fan-out/HITL we don't need. Human asked for research response; no SCOPE change, no dependency added. Custom `states.py/transitions.py` stays.
 - **Demographics decision (human, session 04):** non-scored context ONLY (hard rule 10 + SCOPE out-of-scope for scored use retained). No code yet; renders as labeled context, never enters weights.
-- **G2 progress (session 05):** normalizer accepts LIVE shapes (`results` list for /search; `results.entities` for insights; top-level popularity + `properties` fallback; tag `id/tag_id/value`; `subtype` + `types[0]` fallback; `/v2/tags` lookup refused as non-evidence). New synthetic fixture `fixture_search_live_shape.json` + 3 tests. Suite 42 → **45 passed**.
-- **NOT yet built (G2 remainder):** persistence.py, qloo_client.py (shapes now VERIFIED — unblocked), coordinator run path (brief → evidence → ranking → run record), reproducibility test (10 runs), API routes, frontend.
-- **Next actions (in order):** 1) coordinator fixture-mode run path end-to-end (persistence DONE) 2) reproducibility test 3) qloo_client.py live adapter 4) sensitivity robustness.py 5) API routes after coordinator works.
+- **G2 progress (session 07):** `qloo_client.py` (HTTP-only, retry policy, 8 MockTransport tests), `criterion_extraction.py` (single formulas C1–C5 + read-only diagnostics, 2 tests), `coordinator.py` (full state walk, template claims, deterministic critic, report + persistence), `LiveEvidenceSource` in adapter (allowlist + call counter). Defect caught by tests: evidence IDs not run-scoped → UNIQUE violation on run 2; fixed by run-scoping before claims cite them. Suite 48 → **60 passed**. Neon fixture slice: winner A, B INFEASIBLE (gate works), A/C tie broken deterministically, 1 limitation (G4 deferral), 0 critic findings. Live confirm PENDING brief approval (~7 calls).
+- **NOT yet built (G2 remainder):** live-confirm run on Neon, then G2 acceptance sign-off.
+- **Next actions (in order):** 1) brief approval → live confirm on Neon 2) G2 sign-off + SCOPE gate line 3) sensitivity robustness.py (G4) 4) API routes 5) G3 agent wrappers.
+
+## Sessions (newest first)
+
+### Session 07 — 2026-10-16 — G2 core built: client, extraction, coordinator, reproducibility
+
+- Tests-first: `tests/integration/test_qloo_client.py` (8: auth/429/5xx/timeout/non-JSON, retry counts), `tests/unit/test_criterion_extraction.py` (2: formula values + empty/error edges), `tests/workflow/test_coordinator.py` (2: fixture run ranks/gate/report/persistence; 10-run identical ranks + totals).
+- New modules: `app/integrations/qloo_client.py`, `app/services/criterion_extraction.py`, `app/workflow/coordinator.py`, `LiveEvidenceSource` in `qloo_adapter.py`. Each displaces nothing (retrieval/scoring/workflow rows); no new dependencies.
+- Fixture-run caveat: FixtureSource serves the same search file per concept, so A/C tied at 60.0 (tie-break by concept_id); live evidence differentiates fully. Labeled fixture mode throughout.
+- Decision choices section started in this file (running list, newest first).
 
 ## Sessions (newest first)
 
@@ -65,6 +74,24 @@ Workflow conventions for every session:
 1. Append a numbered session entry below (newest first) at end of session.
 2. Update CURRENT STATE so it is true after the session.
 3. Never log QLOO_API_KEY or any secret here.
+4. Log every user-facing choice in Decision choices below (date | decision | alternatives | why | approved by).
+
+---
+
+## Decision choices (running list; newest first)
+
+- 2026-10-16 | G2 runs persist to Neon (not SQLite) | SQLite local was recommended | durable hosted runs prove the deployed path early; network cost accepted | human
+- 2026-10-16 | G2 scope = coordinator + report JSON (no API routes, no UI today) | include-API / include-UI options | keep today's finish inside G2 acceptance (ranking + report + reproducibility) | human
+- 2026-10-16 | G2 evidence = fixture first, then one live confirm | live-only / fixture-only | deterministic build + 10-run test free, then real-path proof for ~7 quota calls | human
+- 2026-10-16 | G2 demo brief = agent-drafted stationery set, human approves before live run | human-supplied brief | unblocks code build while brief approval gates only the live run | human
+- 2026-10-16 | C2/C3 formula switcher + custom formulas DEFERRED (out of scope) | dropdown + freeform entry | breaks single-version cap + reproducibility; server-side custom formulas = code-execution hole | agent proposed, human to confirm
+- 2026-10-16 | Three C1 variants as cards REJECTED; one C1 (mean popularity) + rank/hit-count diagnostics | three live variants | SCOPE one-version cap + 10-run reproducibility fail with competing C1s | agent proposed, human to confirm
+- 2026-10-16 | Demographics = non-scored context only | scored demographic input | hard rule 10 + stereotyping risk + SCOPE out-of-scope | human
+- 2026-10-16 | Keep custom coordinator, no LangGraph | LangGraph wrapper / full graph | linear pipeline; framework pays off only with branching/checkpointing/fan-out we lack | agent proposed, human asked for research
+- 2026-10-16 | `QLOO_BASE_URL` env var (hackathon default) | keep hardcoded | base URL is config, not code; wrong-URL 401 trap documented | human
+- 2026-10-16 | Fixture policy: synthetic committable, recorded local-only | commit redacted recordings | Qloo terms forbid response data in public repo | human
+- 2026-10-15 | Neon for hosted Postgres | Supabase slot in stack | free-tier standard Postgres, SQLAlchemy-compatible | human
+- 2026-10-15 | C4 = weightless gate, `c4` weight rejected | C4 as fifth weight | gate double-counted as score; hidden-input risk | human
 
 ---
 
