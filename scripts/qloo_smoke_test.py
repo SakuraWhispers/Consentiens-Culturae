@@ -1,13 +1,20 @@
 # scripts/qloo_smoke_test.py — the G1 API spike (AGENTS.md section 7).
-
+#
 # Run MANUALLY with a real key: QLOO_API_KEY=... python scripts/qloo_smoke_test.py
-# Makes one authenticated call per allowlisted-candidate endpoint, parses the
-# response into internal objects, and optionally saves a REDACTED fixture.
-
-# Hard rules honored here:
-# - the key is read from the environment only, never printed, never saved
-# - no key or header value ever lands in a fixture or in stdout
-# - everything is recorded later by hand in docs/qloo-api-notes.md
+# Makes one authenticated call per allowlisted endpoint, parses the response
+# into internal objects, and optionally saves a REDACTED fixture.
+#
+# Facts from the official hackathon guide (DOCS-VERIFIED 2026-10-16, see
+# docs/qloo-api-notes.md):
+# - base URL must be https://hackathon.api.qloo.com (other URLs 401 by design)
+# - key goes in the X-Api-Key header, never as a query param or Bearer token
+# - /v2/insights is a GET with query-string params; POST fails
+# - /v2/insights requires filter.type; invalid params are silently ignored
+# - a 200 with an empty entities array can mean bad params OR a real no-match
+#
+# IMPORTANT (Qloo terms, DOCS-VERIFIED 2026-10-16): recorded live responses
+# must NOT be committed to the public repository. Saving a fixture writes a
+# local file only; the human decides where recorded fixtures live.
 
 from __future__ import annotations
 
@@ -26,8 +33,8 @@ except ImportError:  # pragma: no cover
 
 TIMEOUT_SECONDS = 10.0
 
-# Lead candidates from docs/qloo-api-notes.md (status: UNVERIFIED).
-# The script tries both base URLs and records which one authenticates.
+# Base URLs probed. The hackathon URL is the documented one; the other is kept
+# only to CONFIRM the documented 401-on-wrong-base-URL behavior once, cheaply.
 BASE_URL_CANDIDATES = [
     "https://hackathon.api.qloo.com",
     "https://api.qloo.com",
@@ -36,7 +43,10 @@ BASE_URL_CANDIDATES = [
 ENDPOINT_CANDIDATES = [
     ("search", "/search", {"query": "{term}"}),
     ("tags", "/v2/tags", {"query": "{term}"}),
-    ("insights", "/v2/insights", {"query": "{term}"}),
+    # filter.type is REQUIRED for insights; urn:entity:brand is the documented
+    # entity type closest to stationery/creative accessories.
+    ("insights_brand", "/v2/insights", {"filter.type": "urn:entity:brand"}),
+    ("insights_place", "/v2/insights", {"filter.type": "urn:entity:place"}),
 ]
 
 REDACTION_KEYS = {"api_key", "key", "token", "secret", "authorization", "x-api-key"}
@@ -102,7 +112,11 @@ def main() -> int:
         return 2
 
     print("G1 spike: probing base URLs and endpoints. Results are printed WITHOUT the key.")
-    print(f"term: {args.term!r}  timeout: {TIMEOUT_SECONDS}s\n")
+    print(
+        f"term: {args.term!r}  timeout: {TIMEOUT_SECONDS}s\n"
+        "(insights calls omit the term for now: /v2/tags provides the valid tag"
+        " IDs that insights signal/filter params require)\n"
+    )
 
     saved: dict[str, Any] | None = None
     results: list[dict[str, Any]] = []

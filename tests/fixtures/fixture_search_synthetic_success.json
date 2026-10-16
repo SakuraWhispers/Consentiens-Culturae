@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "fixture": true,
+    "source": "hand-written",
+    "recorded_at": null,
+    "redacted": true,
+    "note": "Synthetic, hand-written fixture. Contains NO real Qloo data. Entity ids, names, and values are invented for offline tests only (SCOPE.md decision log 2026-10-16). Shape mirrors docs/qloo-api-notes.md section 3 (DOCS-VERIFIED 2026-10-16): success envelope with results.entities[]."
+  },
+  "request_params": {
+    "query": "MOCK studio notebook",
+    "filter.type": "urn:entity:brand"
+  },
+  "response": {
+    "success": true,
+    "results": {
+      "entities": [
+        {
+          "name": "Mock Studio Notebooks",
+          "entity_id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+          "type": "urn:entity",
+          "subtype": "urn:entity:brand",
+          "properties": {
+            "popularity": 0.4242,
+            "description": "Synthetic stationery brand used only in offline tests."
+          },
+          "tags": [
+            { "id": "urn:tag:keyword:mock:notebook", "name": "Notebook", "type": "urn:tag:keyword:mock" },
+            { "id": "urn:tag:keyword:mock:stationery", "name": "Stationery", "type": "urn:tag:keyword:mock" }
+          ]
+        },
+        {
+          "name": "Mock Paper Works",
+          "entity_id": "FFFFFFFF-1111-2222-3333-444444444444",
+          "type": "urn:entity",
+          "subtype": "urn:entity:brand",
+          "properties": {
+            "popularity": 0.1717
+          },
+          "tags": []
+        }
+      ]
+    }
+  }
+}

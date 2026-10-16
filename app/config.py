@@ -14,7 +14,7 @@ class Settings:
     """Read once per process. Live mode with missing keys fails at startup."""
 
     app_mode: str = "fixture"  # "fixture" | "live"
-    database_url: str = "sqlite:///./culturefit.db"
+    database_url: str = "sqlite:///./consentiens_culturae.db"
     qloo_timeout_seconds: float = 10.0
     qloo_max_calls_per_run: int = 10
     insufficient_coverage_threshold: float = 0.5
@@ -23,7 +23,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             app_mode=(_env("APP_MODE", "fixture") or "fixture").lower(),
-            database_url=_env("DATABASE_URL", "sqlite:///./culturefit.db") or "",
+            database_url=_env("DATABASE_URL", "sqlite:///./consentiens_culturae.db") or "",
             qloo_timeout_seconds=float(_env("QLOO_TIMEOUT_SECONDS", "10") or 10),
             qloo_max_calls_per_run=int(_env("QLOO_MAX_CALLS_PER_RUN", "10") or 10),
             insufficient_coverage_threshold=float(

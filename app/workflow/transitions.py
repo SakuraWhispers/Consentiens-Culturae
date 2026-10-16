@@ -1,4 +1,4 @@
-"""Legal state transitions (architecture.md section 4).
+"""Legal state transitions (docs/architecture.md section 4).
 
 The coordinator is the only component allowed to move a run between states,
 and only through check_transition / transition, which enforce this table.

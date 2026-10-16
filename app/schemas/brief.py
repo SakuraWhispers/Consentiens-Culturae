@@ -2,7 +2,7 @@
 
 Category is fixed to the demo category; users never choose it.
 Weights cover the four soft criteria C1, C2, C3, C5 and must sum to 1
-(architecture.md section 3.3). C4 is a gate with NO weight (human decision
+(docs/architecture.md section 3.3). C4 is a gate with NO weight (human decision
 2026-10-15): it never enters the weighted total, and a payload carrying a
 \"c4\" weight is rejected rather than silently discarded.
 """
@@ -53,7 +53,7 @@ class Weights(BaseModel):
 
 
 class HardConstraint(BaseModel):
-    """A user-listed hard constraint, checked as a gate (architecture.md section 3.2).
+    """A user-listed hard constraint, checked as a gate (docs/architecture.md section 3.2).
 
     v0.1 form: attribute/value equality against a concept's attribute map.
     Richer operators are deliberately deferred until real briefs exercise this.

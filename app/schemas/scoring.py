@@ -1,4 +1,4 @@
-"""Scoring output contracts (architecture.md section 3). Code produces these; the LLM never does."""
+"""Scoring output contracts (docs/architecture.md section 3). Code produces these; the LLM never does."""
 
 from typing import Literal
 
@@ -11,7 +11,7 @@ ScoreStatus = Literal["RANKED", "INFEASIBLE", "INSUFFICIENT_EVIDENCE"]
 NormalizationMethod = Literal["min_max_across_concepts", "fixed_scale_0_100", "none"]
 
 # Which criteria contribute to the weighted total. C4 is always gate-only
-# (architecture.md section 3.2) - it never joins the weighted sum.
+# (docs/architecture.md section 3.2) - it never joins the weighted sum.
 SOFT_CRITERIA: tuple[str, ...] = ("C1", "C2", "C3", "C5")
 
 

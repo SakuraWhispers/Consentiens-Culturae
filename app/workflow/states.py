@@ -1,4 +1,4 @@
-"""Workflow states (architecture.md section 4), as a typed enum."""
+"""Workflow states (docs/architecture.md section 4), as a typed enum."""
 
 from enum import Enum
 

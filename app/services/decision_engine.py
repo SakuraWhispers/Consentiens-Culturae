@@ -1,4 +1,4 @@
-"""Deterministic scoring engine (architecture.md section 3).
+"""Deterministic scoring engine (docs/architecture.md section 3).
 
 Code only. No LLM call may ever enter this module. No randomness.
 Ranks, weights, and scores come from here and only from here (AGENTS.md hard rule 2).
@@ -27,7 +27,7 @@ class ScoringInputError(ValueError):
 def min_max_normalize(raw_by_concept: dict[str, float]) -> dict[str, float]:
     """Map raw values to 0-100 with min-max across the run's three concepts.
 
-    Documented behavior (architecture.md section 3.1):
+    Documented behavior (docs/architecture.md section 3.1):
     - min -> 0, max -> 100, others linear in between.
     - all values equal -> 50.0 for each (small differences cannot be exaggerated
       when there is no difference; the midpoint is the neutral choice).
@@ -88,7 +88,7 @@ def score_concepts(
 ) -> list[ConceptScore]:
     """Compute deterministic scores and ranks for exactly the given concepts.
 
-    - Missing evidence is None, never zero (architecture.md section 3.3).
+    - Missing evidence is None, never zero (docs/architecture.md section 3.3).
     - The weighted total renormalizes over criteria that are available.
     - C4 is a gate, never part of the weighted sum (section 3.2).
     - INFEASIBLE concepts are never ranked.
@@ -183,7 +183,7 @@ def score_concepts(
         )
 
     # 4. Ranks over RANKED concepts only. Tie-break: total, then C1, then C5,
-    #    then concept_id lexicographic (architecture.md section 3.3).
+    #    then concept_id lexicographic (docs/architecture.md section 3.3).
     ranked = [r for r in results if r.status == "RANKED"]
     ranked.sort(key=lambda r: _rank_key(r, normalized))
     for position, r in enumerate(ranked, start=1):

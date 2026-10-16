@@ -8,7 +8,7 @@ Last updated: 2026-10-15. Owner: solo developer (the human). Change this header 
 
 ## 1. What we are building
 
-**CultureFit Decision Engine** (working name, may change). A decision-support web app for a small consumer brand. The user enters a decision brief, a target audience and market, and exactly three competing product concepts. The app retrieves cultural-affinity evidence from the Qloo API, scores the concepts with deterministic code, has an LLM explain and critique the result within strict limits, and runs a sensitivity analysis on the user's weights.
+**Consentiens-Culturae Decision Engine** (working name, may change). A decision-support web app for a small consumer brand. The user enters a decision brief, a target audience and market, and exactly three competing product concepts. The app retrieves cultural-affinity evidence from the Qloo API, scores the concepts with deterministic code, has an LLM explain and critique the result within strict limits, and runs a sensitivity analysis on the user's weights.
 
 **Pipeline (the only pipeline):**
 

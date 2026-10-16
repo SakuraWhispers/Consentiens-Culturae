@@ -8,7 +8,7 @@ Last updated: 2026-10-15.
 
 ## 1. Product in one paragraph
 
-CultureFit helps a small consumer brand compare three competing product concepts for a defined audience and market. It retrieves cultural-affinity evidence from the Qloo API, scores the concepts with transparent deterministic code, has a bounded AI analyst and critic review the explanation, and shows whether the ranking holds when the user's priorities change. It is an early concept-screening aid. It is not a sales forecast and does not replace consumer research.
+Consentiens-Culturae helps a small consumer brand compare three competing product concepts for a defined audience and market. It retrieves cultural-affinity evidence from the Qloo API, scores the concepts with transparent deterministic code, has a bounded AI analyst and critic review the explanation, and shows whether the ranking holds when the user's priorities change. It is an early concept-screening aid. It is not a sales forecast and does not replace consumer research.
 
 **Demo category (fixed):** stationery and creative accessories.
 **Target user:** a founder or small team at an independent consumer brand with limited research budget.
@@ -30,7 +30,7 @@ Anything that does not fit one of these four stages, or the UI and persistence t
 
 | Area | Item | Hard cap |
 |---|---|---|
-| Input | One decision brief form: category (fixed), market, audience description, business goal, up to 3 hard constraints, weights for 5 criteria, exactly 3 concepts | 3 concepts, 5 criteria |
+| Input | One decision brief form: category (fixed), market, audience description, business goal, up to 3 hard constraints, weights for the 4 soft criteria (C1, C2, C3, C5; C4 is a weightless gate), exactly 3 concepts | 3 concepts, 5 criteria |
 | Retrieval | Qloo calls from an allowlist (exact list in `docs/qloo-api-notes.md`) | max 10 Qloo calls per run; 10 s timeout per call; 1 retry on 429 with backoff |
 | Evidence | Normalized `EvidenceRecord`s with provenance, match quality, coverage status, `fixture_mode` | — |
 | Scoring | 5 criteria (see architecture doc), one `scoring_version`, hard constraints as gates | 1 scoring version |
@@ -72,7 +72,7 @@ Dates are Eastern Daylight Time unless stated. Each gate has an acceptance check
 | Gate | Date | Acceptance check | Status |
 |---|---|---|---|
 | G0 Eligibility and access | Oct 16 | Human confirms eligibility against the official rules page. Hackathon key obtained. Starter kit read. | open |
-| G1 API spike | Oct 16 | `scripts/qloo_smoke_test.py` makes one authenticated call, parses the response into an internal object, and the result is recorded in `docs/qloo-api-notes.md`. Redacted response saved as `tests/fixtures/fixture_*.json`. | open |
+| G1 API spike | Oct 16 | `scripts/qloo_smoke_test.py` makes one authenticated call, parses the response into an internal object, and the result is recorded in `docs/qloo-api-notes.md`. Recorded response saved REDACTED and LOCAL-ONLY (gitignored, per the 2026-10-16 fixture policy), or as a synthetic fixture if live recording is not possible. | open |
 | G2 Thin vertical slice | Oct 19 | Brief + 3 concepts → real Qloo evidence (or labeled fixture) → normalized records → deterministic ranking → report. Reproducibility test passes (same inputs, same output, 10 runs). | open |
 | G3 Agent roles and critic | Oct 22 | Researcher plans retrieval within the allowlist. Analyst drafts explanation. Critic runs once. One deliberately injected defect is caught and recorded in `critic_findings`. Coordinator handles the revision or qualifies the claim. | open |
 | G4 Sensitivity analysis | Oct 24 | Seeded sampler runs. Top-rank frequency and rank range render. Changing a weight produces a deterministic, explainable change. If this fails, fall back to 3 named weight scenarios. | open |
@@ -131,3 +131,7 @@ Append-only. Newest entries at the bottom. Format: `YYYY-MM-DD | what changed | 
 
 - 2026-10-15 | Initial scope written from handoff v1.0 | Establish gates and out-of-scope list before coding | human (solo developer)
 - 2026-10-15 | Hosted Postgres choice: Neon (fills the "optionally hosted on Supabase" slot in the stack) | Free-plan standard-Postgres, SQLAlchemy-compatible via DATABASE_URL; fits demo scale and judging window; human raised and approved | human (solo developer)
+- 2026-10-16 | Docs moved into `docs/` (architecture.md, qloo-api-notes.md) | AGENTS.md layout names `docs/architecture.md` and `docs/qloo-api-notes.md`; root placement left all `docs/...` references broken; human chose move-over-root-refs | human (solo developer)
+- 2026-10-16 | Fixture policy: hand-written synthetic fixtures committable to the public repo; recorded live-response fixtures local-only (gitignored) | Official hackathon guide forbids storing Qloo response data in a public repo; committed recorded fixtures would risk the Qloo-API-usage pass/fail gate; human approved | human (solo developer)
+- 2026-10-16 | Product name changed from working name "CultureFit Decision Engine" to **Consentiens-Culturae** across AGENTS.md, SCOPE.md, docs/, pyproject.toml, app code, session log | Human owner's explicit instruction in session; name appeared in AGENTS.md §1 as "(working name, may change)" | human (solo developer)
+- 2026-10-16 | Backfilled decision line for the 2026-10-15 C4 decision (decided with the human on 2026-10-15; code shipped same day): C4 constraint-feasibility is a weightless gate; weights cover only C1, C2, C3, C5 and sum to 1; a payload with a `c4` weight is rejected, not dropped | C4 as a weighted score would double-count a gate and risk contradictory ranking | human (2026-10-15 session); line backfilled (session)

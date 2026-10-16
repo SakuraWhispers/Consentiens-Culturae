@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "fixture": true,
+    "source": "hand-written",
+    "recorded_at": null,
+    "redacted": true,
+    "note": "Synthetic, hand-written adversarial fixture. NO real Qloo data. Hand-labeled case: search succeeds but each entity is missing documented fields (no popularity; second entity lacks name and entity_id entirely). Mirrors docs/qloo-api-notes.md section 5 row 'Missing expected field'. Expects coverage_status=partial (first) and ambiguous (second), with per-field limitations."
+  },
+  "request_params": {
+    "query": "MOCK gappy brand"
+  },
+  "response": {
+    "success": true,
+    "results": {
+      "entities": [
+        {
+          "name": "Mock Gappy Brand",
+          "entity_id": "11111111-2222-3333-4444-555555555555",
+          "type": "urn:entity",
+          "subtype": "urn:entity:brand",
+          "properties": {
+            "description": "No popularity field present on purpose."
+          },
+          "tags": [
+            { "id": "urn:tag:keyword:mock:pencil", "name": "Pencil", "type": "urn:tag:keyword:mock" }
+          ]
+        },
+        {
+          "type": "urn:entity",
+          "subtype": "urn:entity:brand",
+          "properties": {
+            "popularity": 0.9
+          },
+          "tags": []
+        }
+      ]
+    }
+  }
+}

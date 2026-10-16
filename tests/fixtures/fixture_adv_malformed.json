@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "fixture": true,
+    "source": "hand-written",
+    "recorded_at": null,
+    "redacted": true,
+    "note": "Synthetic, hand-written adversarial fixture. NO real Qloo data. Hand-labeled case: a successful HTTP call whose response body lacks the documented 'results' object entirely. Expects one EvidenceRecord with coverage_status=error, error_code=QLOO_MALFORMED_RESPONSE."
+  },
+  "request_params": {
+    "query": "MOCK broken payload"
+  },
+  "response": {
+    "success": false,
+    "note": "results object deliberately absent"
+  }
+}

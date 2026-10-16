@@ -1,0 +1,18 @@
+{
+  "_meta": {
+    "fixture": true,
+    "source": "hand-written",
+    "recorded_at": null,
+    "redacted": true,
+    "note": "Synthetic, hand-written adversarial fixture. NO real Qloo data. Hand-labeled case: 200 OK with an empty results.entities array (the documented no-match shape). Expects one EvidenceRecord with coverage_status=missing, error_code=QLOO_NO_MATCH, match_quality=none."
+  },
+  "request_params": {
+    "query": "MOCK no such brand"
+  },
+  "response": {
+    "success": true,
+    "results": {
+      "entities": []
+    }
+  }
+}
