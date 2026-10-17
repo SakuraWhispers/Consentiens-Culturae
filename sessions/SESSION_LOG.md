@@ -3,13 +3,13 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-17 (session 14; OpenRouter live probe running — G3 live test in flight)
+Last updated: 2026-10-17 (session 14 — G3 PASSED with human sign-off after 10 live probe runs; two-pool OpenRouter+Google live config)
 
 ---
 
 ## CURRENT STATE (2026-10-17, session 13)
 
-- **Gates:** G0 done · G1 PASSED (live) · G2 PASSED · G3 PROVISIONAL 2026-10-17 (researcher enforcement + critic live on OpenRouter; analyst live pending free-pool capacity; sign-off pending) · G4 open (engine built; non-render checks ran; render + sign-off pending UI).
+- **Gates:** G0 done · G1 PASSED (live) · G2 PASSED · **G3 PASSED 2026-10-17 (human sign-off; all four agent roles live-verified — analyst claims run acbe81273f…; 116 offline tests)** · G4 open (engine built; non-render checks ran; render + sign-off pending UI).
 - **OpenRouter live evidence so far (3 probe runs + 3 diagnostics, 7/50 daily calls consumed):**
   - Researcher (Nemotron): plan ACCEPTED with valid allowlisted calls; invalid plans rejected by code (missing/empty `filter.type` — both holes closed by tests).
   - Critic (gemma-4-31b-it AND gemma-4-26b-a4b-it, free): schema-valid CriticOutput with 0 findings on fallback claims; 429s did not consume the daily counter (verified via GET /api/v1/key).
@@ -247,5 +247,6 @@ Workflow conventions for every session:
 - 2026-10-17 | Empty-string allowlisted param values also rejected (found live: `filter.type:''` sandbagged an insights call, 200 + dead evidence) | presence-check only | Qloo silent-ignore makes empty values no better than missing ones | agent (live-probe caught)
 - 2026-10-17 | Analyst retry strategy: retry gemma later OR another provider the human may research; Gemma stays configured meanwhile | analyst-only paced loop / full probe /他很nemotron-for-all | human's call; pools saturated, counter only counts successes so retries are costless | human
 - 2026-10-17 | G3 gate = PROVISIONAL (researcher + critic evidenced live; analyst pending) in SCOPE.md | hold open entirely / full pass | analyst is one paced-retry success away; everything else verified | human
+- 2026-10-17 | **G3 PASSED with human sign-off** ("G3 passed"); SCOPE gate line marked PASSED 2026-10-17, evidence cited in the gate cell | — | all four roles live-verified + 116 offline tests + 10 consecutive live C-wins | **human**
 - 2026-10-17 | Google AI Studio added as second OpenAI-compatible pool for analyst/critic (`LLM_PROVIDER=google`, `GEMINI_API_KEY`); researcher stays on OpenRouter via `LLM_RESEARCHER_BASE_URL` | gemma on single router / nemotron for all | 31b+26b gemma free pools on OpenRouter saturate repeatedly; AI Studio serves both gemma models independently of that pool; key chains kept strictly separate | human (provided key)
 - 2026-10-17 | Google-path transport quirks normalized in code (each test-backed): inline `<thought>` blocks stripped; bare top-level JSON arrays bridged per-endpoint into claims/findings/calls; ```json fences stripped; `strength:"medium"`→"moderate" as the sole unambiguous synonym. No schema or validation loosened | reject all variants outright | models ship correct CONTENT in old envelopes; deterministic schema judges content after transport normalization | agent (live-found), human informed
