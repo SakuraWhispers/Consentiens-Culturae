@@ -76,6 +76,45 @@ def test_unknown_param_key_rejected() -> None:
         validate_plan(plan, max_calls=10)
 
 
+def test_insights_missing_filter_type_rejected() -> None:
+    """Qloo /v2/insights REQUIRES filter.type (docs-verified §2; invalid params
+    are silently IGNORED, so a plan without it ships unverifiable evidence).
+    A researcher plan omitting it is rejected; the coordinator then falls back
+    to the deterministic plan (which always carries filter.type) and records
+    the rejection in limitations."""
+    from app.agents.researcher import PlanRejectedError
+
+    plan = RetrievalPlan(calls=[
+        {"endpoint": "search", "params": {"query": "q1"}},
+        {"endpoint": "insights", "params": {"filter.tags": "urn:tag:category:place:stationery_store"}},
+    ])
+    with pytest.raises(PlanRejectedError, match="filter.type"):
+        validate_plan(plan, max_calls=10)
+
+
+def test_insights_empty_filter_type_rejected() -> None:
+    """Live-probe attempt 3 leak: the model sent filter.type='' which passed the
+    key-presence check and sandbagged the insights call (200 + dead evidence).
+    Empty-string values on allowlisted required params must be rejected too."""
+    from app.agents.researcher import PlanRejectedError
+
+    plan = RetrievalPlan(calls=[
+        {"endpoint": "search", "params": {"query": "q1"}},
+        {"endpoint": "insights", "params": {
+            "filter.type": "", "filter.tags": "urn:tag:category:place:stationery_store"}},
+    ])
+    with pytest.raises(PlanRejectedError, match="filter.type"):
+        validate_plan(plan, max_calls=10)
+
+
+def test_search_empty_query_rejected() -> None:
+    from app.agents.researcher import PlanRejectedError
+
+    plan = RetrievalPlan(calls=[{"endpoint": "search", "params": {"query": ""}}])
+    with pytest.raises(PlanRejectedError, match="empty"):
+        validate_plan(plan, max_calls=10)
+
+
 def test_rich_claim_rejects_bad_confidence_and_long_context() -> None:
     with pytest.raises(ValueError):
         RichClaim(

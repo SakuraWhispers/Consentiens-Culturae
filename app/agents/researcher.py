@@ -22,6 +22,20 @@ def validate_plan(plan: RetrievalPlan, max_calls: int = 10) -> RetrievalPlan:
         for key in call.params:
             if key not in allowed:
                 raise PlanRejectedError(f"param {key!r} not allowed for {call.endpoint}")
+            value = call.params[key]
+            if isinstance(value, str) and not value.strip():
+                raise PlanRejectedError(
+                    f"empty value for param {key!r} on {call.endpoint} "
+                    "(Qloo silently ignores bad params — rejected to protect evidence)"
+                )
+        if (
+            call.endpoint == "insights"
+            and "filter.type" not in call.params
+        ):
+            raise PlanRejectedError(
+                "insights call missing required 'filter.type' param "
+                "(Qloo docs: required; invalid params are silently ignored)"
+            )
     return plan
 
 
