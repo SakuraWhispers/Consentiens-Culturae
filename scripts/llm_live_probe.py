@@ -38,16 +38,17 @@ def main() -> int:
     load_env(REPO / ".env")
 
     qloo_key = os.environ.get("QLOO_API_KEY")
-    llm_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     database_url = os.environ.get("DATABASE_URL")
     print("[env] QLOO_API_KEY set:", bool(qloo_key))
-    print("[env] OPENROUTER_API_KEY set:", bool(llm_key))
+    print("[env] GEMINI_API_KEY set:", bool(os.environ.get("GEMINI_API_KEY")))
+    print("[env] OpenRouter key set:",
+          bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")))
     print("[env] DATABASE_URL set:", bool(database_url))
-    if not (qloo_key and llm_key and database_url):
-        print("Missing keys/URL. Fill .env and rerun. Exiting.")
+    if not (qloo_key and database_url):
+        print("Missing QLOO_API_KEY/DATABASE_URL. Fill .env and rerun. Exiting.")
         return 2
 
-    from app.config import Settings
+    from app.config import Settings, llm_api_key
     from app.integrations.qloo_adapter import LiveEvidenceSource
     from app.integrations.qloo_client import QlooClient
     from app.schemas.brief import DecisionBrief
@@ -57,25 +58,51 @@ def main() -> int:
 
     settings = Settings.from_env()
 
-    # Per-role models (human pick): researcher Nemotron, analyst+critic Gemma.
+    # Two pools: MAIN (analyst+critic; llm_model/llm_base_url/llm_api_key per
+    # provider) and RESEARCHER (llm_researcher_model on its own base URL/key,
+    # defaulting to the OpenRouter chain). researcher base defaults to main;
+    # when main is not OpenRouter the .env must set LLM_RESEARCHER_BASE_URL.
+    main_key = llm_api_key(settings.llm_provider)
+    researcher_key = settings.researcher_api_key()
+    base_url = settings.llm_base_url
+    researcher_base = settings.researcher_base_url()
+    on_google = "generativelanguage" in base_url
+    on_openrouter = "openrouter" in researcher_base
     gemma = settings.llm_model
     nemotron = settings.llm_researcher_model or gemma
-    base_url = settings.llm_base_url
-    # Reasoning-heavy free models routinely exceed the 30s default; the probe
-    # buttons up per-call timeout without touching defaults elsewhere.
     timeout = max(settings.llm_timeout_seconds, 180.0)
-    print(f"[llm] researcher model: {nemotron}")
-    print(f"[llm] analyst/critic model: {gemma}")
-    print(f"[llm] base_url host: {base_url.split('//', 1)[-1]}")
+    print(f"[llm] researcher: {nemotron} @ {researcher_base.split('//', 1)[-1]}")
+    print(f"[llm] analyst/critic: {gemma} @ {base_url.split('//', 1)[-1]}"
+          + (" (Google AI Studio)" if on_google else ""))
+    if researcher_key is None or main_key is None:
+        print("[llm] MISSING: researcher key" if researcher_key is None else "",
+              "[llm] MISSING: main key" if main_key is None else "")
+        print("Fill .env and rerun. Exiting.")
+        return 2
 
-    # "Max reasoning" adapted per verified model capabilities:
-    # - Nemotron supports a direct reasoning token budget (effort high is NOT in
-    #   its list: medium/low/none), so give it an explicit large budget.
-    # - Gemma accepts all efforts but reasoning eats the max_tokens budget; at
-    #   effort "max" (~95%) the final JSON would not fit, so effort "high"
-    #   (~80%) with a raised max_tokens is the max USABLE reasoning here.
-    nemotron_gen = {"max_tokens": 32768, "reasoning": {"max_tokens": 16384}}
-    gemma_gen = {"max_tokens": 24000, "reasoning": {"effort": "high"}}
+    # "Max reasoning" per verified model capabilities:
+    # - OpenRouter Nemotron supports a direct reasoning token budget (effort
+    #   high is NOT in its list), so give it an explicit large budget.
+    # - OpenRouter Gemma: effort "max" (~95% of max_tokens) would return no
+    #   JSON, so effort high + max_tokens 24000 is the max USABLE reasoning.
+    # - Google AI Studio (OpenAI-compat): the `reasoning` field is an
+    #   OpenRouter concept — omitted entirely there; JSON mode is requested
+    #   via response_format and if the compat layer rejects anything the
+    #   surfaced error bodies will show it.
+    if on_openrouter:
+        researcher_gen = {"max_tokens": 32768, "reasoning": {"max_tokens": 16384}}
+    else:
+        researcher_gen = {"max_tokens": 32768}
+    if on_google:
+        # Bisected live (diag5): max_tokens 24000 → HTTP 500 on this model;
+        # 16384 (and 8192) verified 200 + clean parse. 31b's json path 500s at
+        # any tested budget today, so the main pool id is the 26b.
+        main_gen = {"max_tokens": 16384}
+        print("[llm] google main pool: `reasoning` omitted (OpenRouter-only param)")
+    elif "openrouter" in base_url:
+        main_gen = {"max_tokens": 24000, "reasoning": {"effort": "high"}}
+    else:
+        main_gen = {"max_tokens": 24000}
 
     brief = DecisionBrief(
         market="US, online and indie bookstores",
@@ -141,9 +168,9 @@ def main() -> int:
 
     def _researcher_once(names, tag_urn):
         plan = draft_plan_llm(
-            llm_key, nemotron, names, tag_urn,
-            timeout=timeout, base_url=base_url,
-            max_tokens=nemotron_gen["max_tokens"], reasoning=nemotron_gen["reasoning"],
+            researcher_key, nemotron, names, tag_urn,
+            timeout=timeout, base_url=researcher_base,
+            max_tokens=researcher_gen["max_tokens"], reasoning=researcher_gen.get("reasoning"),
         )
         # Code-side owner attribution: a planned search whose query matches
         # exactly one concept name attaches to that concept; anything else is
@@ -168,9 +195,9 @@ def main() -> int:
 
     def _analyst_once(score_summary, evidence_summary, limitations, weights):
         draft = draft_claims_llm(
-            llm_key, gemma, score_summary, evidence_summary, limitations, weights,
+            main_key, gemma, score_summary, evidence_summary, limitations, weights,
             timeout=timeout, base_url=base_url,
-            max_tokens=gemma_gen["max_tokens"], reasoning=gemma_gen["reasoning"],
+            max_tokens=main_gen["max_tokens"], reasoning=main_gen.get("reasoning"),
         )
         print(f"[analyst] draft received: {len(draft.claims)} claims")
         return [c.model_dump() for c in draft.claims]
@@ -180,9 +207,9 @@ def main() -> int:
 
     def _critic_once(claims, score_summary, known_ids):
         out = review_claims_llm(
-            llm_key, gemma, claims, score_summary, sorted(known_ids),
+            main_key, gemma, claims, score_summary, sorted(known_ids),
             timeout=timeout, base_url=base_url,
-            max_tokens=gemma_gen["max_tokens"], reasoning=gemma_gen["reasoning"],
+            max_tokens=main_gen["max_tokens"], reasoning=main_gen.get("reasoning"),
         )
         print(f"[critic] findings received: {len(out.findings)}")
         return [f.model_dump() for f in out.findings]
@@ -192,9 +219,9 @@ def main() -> int:
 
     def _revise_once(claims, findings):
         draft = revise_claims_llm(
-            llm_key, gemma, claims, findings,
+            main_key, gemma, claims, findings,
             timeout=timeout, base_url=base_url,
-            max_tokens=gemma_gen["max_tokens"], reasoning=gemma_gen["reasoning"],
+            max_tokens=main_gen["max_tokens"], reasoning=main_gen.get("reasoning"),
         )
         print(f"[revise] revised draft received: {len(draft.claims)} claims")
         return [c.model_dump() for c in draft.claims]

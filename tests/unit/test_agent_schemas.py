@@ -107,6 +107,23 @@ def test_insights_empty_filter_type_rejected() -> None:
         validate_plan(plan, max_calls=10)
 
 
+def test_insights_non_verified_filter_type_value_rejected() -> None:
+    """Live-probe attempt 5: a semantically-wrong-but-non-empty filter.type
+    ('urn:entity:category') passed the shape check and degraded the insights
+    call the same way (63 rows + coverage error, vs 120 with the verified
+    value). Only the docs-verified value is acceptable for this pipeline."""
+    from app.agents.researcher import PlanRejectedError
+
+    plan = RetrievalPlan(calls=[
+        {"endpoint": "search", "params": {"query": "q1"}},
+        {"endpoint": "insights", "params": {
+            "filter.type": "urn:entity:category",
+            "filter.tags": "urn:tag:category:place:stationery_store"}},
+    ])
+    with pytest.raises(PlanRejectedError, match="urn:entity:place"):
+        validate_plan(plan, max_calls=10)
+
+
 def test_search_empty_query_rejected() -> None:
     from app.agents.researcher import PlanRejectedError
 

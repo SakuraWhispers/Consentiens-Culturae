@@ -108,6 +108,83 @@ def test_base_params_absent_by_default() -> None:
     assert "max_tokens" not in body
 
 
+def test_thought_block_stripped_before_json_parse() -> None:
+    # Google-family Gemma streams reasoning inline inside <thought>...</thought>
+    # within content; the JSON answer follows the LAST closing tag. Code-side
+    # transport normalization (not model discretion): strip it before parsing.
+    def thought_handler(request: httpx.Request) -> httpx.Response:
+        content = '<thought>* reason A\n* reason B</thought>\n{"ok": true}'
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(thought_handler)) as client:
+        parsed = complete_json("k", "m", "sys", {"x": 1}, client=client)
+    assert parsed == {"ok": True}
+
+
+def test_thought_block_absent_content_untouched() -> None:
+    def plain_handler(request: httpx.Request) -> httpx.Response:
+        content = '{"ok": false}'
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(plain_handler)) as client:
+        parsed = complete_json("k", "m", "sys", {"x": 1}, client=client)
+    assert parsed == {"ok": False}
+
+
+def test_unterminated_thought_block_raises_named_error() -> None:
+    # A stream cut off mid-reasoning has no answer to parse; the named error
+    # must say so rather than fail obscurely.
+    def cut_handler(request: httpx.Request) -> httpx.Response:
+        content = "<thought>reasoning with no closing tag and no answer"
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "length", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(cut_handler)) as client:
+        with pytest.raises(AgentLLMError, match="unusable output"):
+            complete_json("k", "m", "sys", {"x": 1}, client=client)
+
+
+def test_top_level_array_bridges_only_with_explicit_key() -> None:
+    # Live-found on Google gemma-4: model returns a bare ARRAY of the requested
+    # items. With an explicit key the client bridges {key: items}; without one
+    # it stays a strict named error (no silent guessing).
+    def array_handler(request: httpx.Request) -> httpx.Response:
+        content = '<thought>reasoning</thought>[{"ok": 1}, {"ok": 2}]'
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(array_handler)) as client:
+        bridged = complete_json(
+            "k", "m", "sys", {"x": 1}, client=client, top_level_list_key="claims"
+        )
+        assert bridged == {"claims": [{"ok": 1}, {"ok": 2}]}
+        with pytest.raises(AgentLLMError, match="non-object"):
+            complete_json("k", "m", "sys", {"x": 1}, client=client)
+
+
+def test_fenced_json_code_block_stripped() -> None:
+    # JSON-mode models sometimes fence the payload anyway (```json ... ```).
+    def fenced_handler(request: httpx.Request) -> httpx.Response:
+        content = '```json\n{"ok": true}\n```'
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(fenced_handler)) as client:
+        assert complete_json("k", "m", "sys", {"x": 1}, client=client) == {"ok": True}
+
+
 def test_no_leaderboard_headers_sent() -> None:
     # Attribution headers (HTTP-Referer / X-Title) would count us for the
     # OpenRouter leaderboards; the human asked to stay off them.

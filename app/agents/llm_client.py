@@ -21,6 +21,19 @@ class AgentLLMError(RuntimeError):
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 
+def _strip_thought_block(content: str) -> str:
+    """Google-family Gemma streams reasoning inline inside <thought>...</thought>
+    within the content string; the actual answer follows the LAST closing tag.
+    Transport-shape normalization, applied verbatim before JSON parsing."""
+    idx = content.rfind("</thought>")
+    if idx != -1:
+        return content[idx + len("</thought>"):].strip()
+    if content.lstrip().startswith("<thought>"):
+        # Unterminated stream: no answer present to parse.
+        return ""
+    return content
+
+
 def complete_json(
     api_key: str,
     model: str,
@@ -31,6 +44,7 @@ def complete_json(
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None,
     reasoning: dict[str, Any] | None = None,
+    top_level_list_key: str | None = None,
 ) -> dict[str, Any]:
     """POST one chat-completion request; return the parsed JSON object.
 
@@ -41,7 +55,13 @@ def complete_json(
     `max_tokens` and `reasoning` (e.g. {"effort": "high"} or {"max_tokens": N})
     are forwarded verbatim when set; per OpenRouter, reasoning tokens count
     against max_tokens, so callers must size max_tokens above the reasoning
-    budget or the final JSON gets truncated.
+    budget or the final JSON gets truncated. Google-family Gemma emits inline
+    <thought> blocks inside content; those are stripped before parsing
+    (transport normalization, tested).
+    `top_level_list_key`: when the model returns a bare top-level JSON ARRAY of
+    the items we asked for, bridge it as {key: items} — the wrapper knows which
+    key it requested and downstream schema validation is unchanged. With the
+    parameter unset a non-object stays an error (strict default).
     """
     own_client = client is None
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -91,7 +111,8 @@ def complete_json(
             f"LLM returned unusable envelope: keys={list(body) if isinstance(body, dict) else type(body).__name__}"
         ) from exc
     try:
-        parsed = json.loads(content)
+        stripped = _strip_thought_block(content if isinstance(content, str) else "")
+        parsed = json.loads(stripped)
     except (ValueError, TypeError) as exc:
         raise AgentLLMError(
             "LLM returned unusable output: "
@@ -99,6 +120,8 @@ def complete_json(
             f"content_head={(content or '')[:300]!r}"
         ) from exc
     if not isinstance(parsed, dict):
+        if isinstance(parsed, list) and top_level_list_key:
+            return {top_level_list_key: parsed}
         raise AgentLLMError(
             f"LLM returned a non-object: finish_reason={finish_reason!r}, "
             f"parsed_type={type(parsed).__name__}, content_head={(content or '')[:300]!r}"

@@ -359,6 +359,7 @@ def run_decision(
     }
     if analyst_fn is not None:
         claims = None
+        last_error: Exception | None = None
         for _ in range(2):
             try:
                 candidate = analyst_fn(
@@ -368,11 +369,16 @@ def run_decision(
                     [dict(c) for c in candidate], concept_ids, known_ids
                 )
                 break
-            except Exception:
+            except Exception as exc:
                 claims = None
+                last_error = exc
         if claims is None:
             analyst_llm = False
-            limitations.append("analyst LLM output invalid twice; template explanation used")
+            limitations.append(
+                "analyst LLM output invalid twice "
+                f"({type(last_error).__name__}: {str(last_error)[:180]}"
+                "); template explanation used"
+            )
             claims = _template_claims()
     else:
         claims = _template_claims()
@@ -381,16 +387,22 @@ def run_decision(
     critic_llm = critic_fn is not None
     if critic_fn is not None:
         findings = None
+        last_error = None
         for _ in range(2):
             try:
                 candidate = critic_fn(claims, score_summary, sorted(known_ids))
                 findings = _validate_critic_output([dict(f) for f in candidate], concept_ids)
                 break
-            except Exception:
+            except Exception as exc:
                 findings = None
+                last_error = exc
         if findings is None:
             critic_llm = False
-            limitations.append("critic LLM output invalid twice; deterministic checks used")
+            limitations.append(
+                "critic LLM output invalid twice "
+                f"({type(last_error).__name__}: {str(last_error)[:180]}"
+                "); deterministic checks used"
+            )
             findings = _deterministic_critic(claims, known_ids)
     else:
         findings = _deterministic_critic(claims, known_ids)
@@ -400,6 +412,7 @@ def run_decision(
     if revisable and revise_fn is not None:
         move(RunState.REVISING)
         revised = None
+        last_error = None
         for _ in range(2):
             try:
                 candidate = revise_fn(claims, findings)
@@ -407,14 +420,19 @@ def run_decision(
                     [dict(c) for c in candidate], concept_ids, known_ids
                 )
                 break
-            except Exception:
+            except Exception as exc:
                 revised = None
+                last_error = exc
         if revised is not None:
             claims = revised
             revision_count = 1
             findings = findings + _deterministic_critic(claims, known_ids)
         else:
-            limitations.append("revision failed twice; original claims kept and qualified")
+            limitations.append(
+                "revision failed twice "
+                f"({type(last_error).__name__}: {str(last_error)[:180]}"
+                "); original claims kept and qualified"
+            )
             for claim in claims:
                 claim["qualified"] = True
     elif revisable:

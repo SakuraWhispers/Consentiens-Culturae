@@ -36,6 +36,17 @@ def validate_plan(plan: RetrievalPlan, max_calls: int = 10) -> RetrievalPlan:
                 "insights call missing required 'filter.type' param "
                 "(Qloo docs: required; invalid params are silently ignored)"
             )
+        if call.endpoint == "insights" and call.params.get("filter.type") not in (
+            None,
+            "urn:entity:place",
+        ):
+            # Only the docs-verified type (docs/qloo-api-notes.md) produces the
+            # place-level evidence this pipeline scores; anything else seeds a
+            # 200-plus-dead-evidence insights call instead of a loud failure.
+            raise PlanRejectedError(
+                f"insights filter.type {call.params.get('filter.type')!r} is not "
+                "the docs-verified 'urn:entity:place' for this pipeline"
+            )
     return plan
 
 

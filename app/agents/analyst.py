@@ -41,6 +41,7 @@ def draft_plan_llm(
         api_key, model, RESEARCHER_SYSTEM,
         {"concepts": concept_names, "tag_urn": tag_urn, "max_calls": 10},
         timeout, client, base_url, max_tokens, reasoning,
+        top_level_list_key="calls",
     )
     return validate_plan(RetrievalPlan(calls=_stringify_params(parsed)))
 
@@ -57,6 +58,7 @@ def draft_claims_llm(
         {"scores": score_summary, "evidence": evidence_summary,
          "limitations": limitations, "weights": weights},
         timeout, client, base_url, max_tokens, reasoning,
+        top_level_list_key="claims",
     )
     return AnalysisDraft(**parsed)
 
@@ -72,6 +74,7 @@ def review_claims_llm(
         api_key, model, CRITIC_SYSTEM,
         {"claims": claims, "scores": score_summary, "known_evidence_ids": evidence_ids},
         timeout, client, base_url, max_tokens, reasoning,
+        top_level_list_key="findings",
     )
     return CriticOutput(**parsed)
 
@@ -86,6 +89,7 @@ def revise_claims_llm(
         api_key, model, REVISION_SYSTEM,
         {"claims": claims, "findings": findings},
         timeout, client, base_url, max_tokens, reasoning,
+        top_level_list_key="claims",
     )
     return AnalysisDraft(**parsed)
 
