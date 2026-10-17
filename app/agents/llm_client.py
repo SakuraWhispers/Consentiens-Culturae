@@ -27,10 +27,15 @@ def _strip_thought_block(content: str) -> str:
     Transport-shape normalization, applied verbatim before JSON parsing."""
     idx = content.rfind("</thought>")
     if idx != -1:
-        return content[idx + len("</thought>"):].strip()
-    if content.lstrip().startswith("<thought>"):
+        content = content[idx + len("</thought>"):].strip()
+    elif content.lstrip().startswith("<thought>"):
         # Unterminated stream: no answer present to parse.
         return ""
+    # Some JSON-mode models fence the payload despite response_format.
+    if content.lstrip().startswith("```"):
+        inner = content.lstrip()[content.lstrip().index("\n") + 1:]
+        end = inner.rfind("```")
+        content = inner[:end].strip() if end != -1 else inner.strip()
     return content
 
 

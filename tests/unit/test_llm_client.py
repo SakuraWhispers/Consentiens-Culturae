@@ -185,6 +185,22 @@ def test_fenced_json_code_block_stripped() -> None:
         assert complete_json("k", "m", "sys", {"x": 1}, client=client) == {"ok": True}
 
 
+def test_fenced_array_after_thought_bridges() -> None:
+    # Thought block AND code fence together — the mix Google gemma-4 produces.
+    def mixed_handler(request: httpx.Request) -> httpx.Response:
+        content = '<thought>reasoning</thought>```json\n[{"ok": 1}]\n```'
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(mixed_handler)) as client:
+        bridged = complete_json(
+            "k", "m", "sys", {"x": 1}, client=client, top_level_list_key="claims"
+        )
+        assert bridged == {"claims": [{"ok": 1}]}
+
+
 def test_no_leaderboard_headers_sent() -> None:
     # Attribution headers (HTTP-Referer / X-Title) would count us for the
     # OpenRouter leaderboards; the human asked to stay off them.

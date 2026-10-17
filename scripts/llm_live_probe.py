@@ -70,7 +70,10 @@ def main() -> int:
     on_openrouter = "openrouter" in researcher_base
     gemma = settings.llm_model
     nemotron = settings.llm_researcher_model or gemma
-    timeout = max(settings.llm_timeout_seconds, 180.0)
+    # Reasoning-heavy calls routinely exceed the 30s default; Google's gemma-4
+    # emits its <thought> block INTO the stream before the answer, and a live
+    # analyst attempt was still generating at the old 180s ceiling → 300s.
+    timeout = max(settings.llm_timeout_seconds, 300.0)
     print(f"[llm] researcher: {nemotron} @ {researcher_base.split('//', 1)[-1]}")
     print(f"[llm] analyst/critic: {gemma} @ {base_url.split('//', 1)[-1]}"
           + (" (Google AI Studio)" if on_google else ""))
@@ -132,24 +135,27 @@ def main() -> int:
             )
 
     def pace(step: str, call):
-        """Run one hook call; on provider 429s wait once and retry once.
+        """Run one hook call; on provider 429s/5xx wait once and retry once.
 
         Free-model 429s are provider-pool capacity (verified: they do not
-        consume the key's daily counter); instant retries just re-429. The
-        coordinator's own retry-once then still applies after a second
+        consume the key's daily counter); instant retries just re-429. Google's
+        OpenAI-compat layer intermittently returns 500 INTERNAL / 503
+        UNAVAILABLE under burst load — same treatment: wait, then retry.
+        The coordinator's own retry-once then still applies after a second
         failure, so no failure path is silencer-narrowed.
         """
         import time
 
+        transient_markers = ("rate limited", "HTTP 5", "UNAVAILABLE", "Internal error")
         for attempt in (1, 2):
             guard(step)
             try:
                 if attempt == 2:
-                    print(f"[llm] {step}: waiting 70s before paced retry (provider 429)...")
+                    print(f"[llm] {step}: waiting 70s before paced retry (provider error)...")
                     time.sleep(70)
                 return call()
             except AgentLLMError as exc:
-                if "rate limited" not in str(exc) or attempt == 2:
+                if not any(m in str(exc) for m in transient_markers) or attempt == 2:
                     raise
             except Exception:
                 raise

@@ -65,3 +65,47 @@ def test_plan_off_allowlist_param_rounded_up_to_rejection() -> None:
         import pytest
         with pytest.raises(PlanRejectedError):
             draft_plan_llm("k", "m", ["x"], None, client=client)
+
+
+_BARE_CLAIM = {
+    "claim_id": "claim-A", "concept_id": "A", "claim_type": "observation",
+    "strength": "moderate", "confidence": "medium",
+    "text": "Mock A ranks second on available evidence.",
+    "evidence_ids": [], "score_fields": [], "audience_context": None,
+}
+
+
+def test_bare_top_level_claims_array_bridges_into_valid_draft() -> None:
+    # Google gemma-4-26b live behavior: answers the claims prompt with a bare
+    # JSON array instead of {"claims": [...]}. Bridge + pydantic validation.
+    content = json.dumps([_BARE_CLAIM, {**_BARE_CLAIM, "claim_id": "claim-B",
+                                        "concept_id": "B"}])
+    from app.agents.analyst import draft_claims_llm
+
+    with httpx.Client(transport=_handler(content)) as client:
+        draft = draft_claims_llm(
+            "k", "m",
+            {"A": {"rank": 1, "status": "RANKED", "weighted_total": 60.0}},
+            {"A": {"available": 5, "total": 5}},
+            [], {"c1": 1.0},
+            client=client,
+        )
+    assert [c.claim_id for c in draft.claims] == ["claim-A", "claim-B"]
+
+
+def test_bare_top_level_findings_array_bridges_into_valid_output() -> None:
+    content = json.dumps([{
+        "issue_code": "UNSUPPORTED_CLAIM", "severity": "minor",
+        "affected_concept_id": "A", "affected_claim_id": "claim-A",
+        "evidence_ids": [], "explanation": "no evidence row backs the phrasing",
+        "suggested_action": "qualify",
+    }])
+    from app.agents.analyst import review_claims_llm
+
+    with httpx.Client(transport=_handler(content)) as client:
+        out = review_claims_llm(
+            "k", "m", [_BARE_CLAIM],
+            {"A": {"rank": 1, "status": "RANKED", "weighted_total": 60.0}},
+            [], client=client,
+        )
+    assert [f.affected_claim_id for f in out.findings] == ["claim-A"]

@@ -11,10 +11,12 @@ RULES (violations are rejected by code, not negotiated):
 ANALYST_SYSTEM = """You explain a deterministic concept ranking. The scores and ranks are COMPUTED ALREADY and immutable.
 RULES:
 - Every number or rank you state MUST appear verbatim in the provided structured results. Never invent, round, or restate numbers.
-- Each claim cites evidence_ids from the provided list and/or score_fields. Claims with no available evidence get strength weak and confidence low.
+- The payload's evidence section contains AGGREGATE COUNTS ONLY (available/total) — it contains NO evidence ID list. Therefore evidence_ids MUST be an empty array []; do NOT invent, guess, or use placeholder IDs (digits are still invented IDs and will be rejected). Cite the evidence base in your text as a count ("40 of 40 evidence records available").
+- score_fields may reference computed score attributes like "A.weighted_total" or "B.rank" (concept_id.field).
+- Claims with no available evidence get strength weak and confidence low.
 - claim_type is observation (score/evidence fact), interpretation (labeled as such), or recommendation (screening next step only — never a purchase/success prediction).
 - audience_context is an optional NON-SCORED labeled note (max 280 chars). Never present it as a score input; never stereotype.
-- Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [...], "score_fields": [...], "audience_context": ...}]}."""
+- Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [], "score_fields": [...], "audience_context": ...}]}."""
 
 CRITIC_SYSTEM = """You check analyst claims against cited evidence and computed results.
 - Flag ONLY these issue codes: UNSUPPORTED_CLAIM, CLAIM_STRENGTH_EXCEEDS_EVIDENCE, MISSING_EVIDENCE, ENTITY_MATCH_AMBIGUOUS, CONSTRAINT_VIOLATION, SCORE_MISMATCH, CAUSAL_OVERCLAIM, CULTURAL_STEREOTYPE_RISK, INCOMPARABLE_DATA, CONTRADICTORY_RATIONALE.
