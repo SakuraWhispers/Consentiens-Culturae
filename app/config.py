@@ -23,6 +23,7 @@ class Settings:
     llm_enabled: bool = False
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o-mini"
+    llm_base_url: str = "https://api.openai.com/v1"
     llm_timeout_seconds: float = 30.0
 
     @classmethod
@@ -42,6 +43,10 @@ class Settings:
             llm_enabled=(_env("LLM_ENABLED", "false") or "false").lower() == "true",
             llm_provider=(_env("LLM_PROVIDER", "openai") or "openai").lower(),
             llm_model=_env("LLM_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
+            llm_base_url=(
+                _env("LLM_BASE_URL", "https://api.openai.com/v1")
+                or "https://api.openai.com/v1"
+            ).rstrip("/"),
             llm_timeout_seconds=float(_env("LLM_TIMEOUT_SECONDS", "30") or 30),
         )
 

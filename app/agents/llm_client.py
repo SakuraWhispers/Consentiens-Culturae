@@ -18,6 +18,9 @@ class AgentLLMError(RuntimeError):
     """LLM call failed or returned unusable output."""
 
 
+DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+
+
 def complete_json(
     api_key: str,
     model: str,
@@ -25,13 +28,20 @@ def complete_json(
     user_payload: dict[str, Any],
     timeout_seconds: float = 30.0,
     client: httpx.Client | None = None,
+    base_url: str = DEFAULT_LLM_BASE_URL,
 ) -> dict[str, Any]:
-    """POST one chat-completion request; return the parsed JSON object."""
+    """POST one chat-completion request; return the parsed JSON object.
+
+    Any OpenAI-compatible endpoint works (OpenAI default; OpenRouter via
+    base_url="https://openrouter.ai/api/v1"). Keys and payloads travel in
+    headers/body only — never logged.
+    """
     own_client = client is None
+    url = f"{base_url.rstrip('/')}/chat/completions"
     http = client or httpx.Client(timeout=timeout_seconds)
     try:
         resp = http.post(
-            "https://api.openai.com/v1/chat/completions",
+            url,
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": model,
@@ -67,4 +77,4 @@ def complete_json(
     return parsed
 
 
-__all__ = ["AgentLLMError", "complete_json"]
+__all__ = ["AgentLLMError", "complete_json", "DEFAULT_LLM_BASE_URL"]

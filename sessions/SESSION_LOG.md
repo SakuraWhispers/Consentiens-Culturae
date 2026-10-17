@@ -3,26 +3,27 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-16 (session 12; build closed for the day — handoff below)
+Last updated: 2026-10-17 (session 13; OpenRouter wired, UI deferred to post-phase Vercel page)
 
 ---
 
-## CURRENT STATE — HANDOFF (end of day 2026-10-16; next human in charge tomorrow)
+## CURRENT STATE (2026-10-17, session 13)
 
-- **Gates:** G0 done · G1 PASSED (live) · G2 PASSED (human sign-off, SCOPE.md updated) · G3 paths built, live LLM test pending key · G4 sensitivity BUILT + wired (this session).
-- **What was built (all tested, suite 80 green on `.venv` python):**
-  - Pipeline: brief → retrieval (fixture + live Qloo) → normalize (live shapes) → extract (single formulas + diagnostics) → score (gates, coverage, tie-break) → template/LLM claims → deterministic/LLM critic → ≤1 revision → sensitivity → persisted report.
-  - API: `GET /api/health`, `POST /api/decision-runs`, `GET /api/decision-runs/{id}` (`uvicorn --factory app.main:serve`).
-  - Live-verified: hackathon URL + key; `/search`, `/v2/tags`, `/v2/insights` shapes; live slice winner C 73.8 > A 67.5 (4 calls, B INFEASIBLE).
-  - Neon Postgres 18.6 pooled: 5 tables live; local default stays SQLite.
-- **What is LEFT to build:**
-  1. Minimal report UI (Level B last item; serves G2 exit fully) — static page served by FastAPI hitting the API above.
-  2. Live LLM test (needs `LLM_API_KEY` + `LLM_ENABLED=true`; OpenAI gpt-4o-mini picked; Gemini fallback possible) — then G3 sign-off.
-  3. 3-way evaluation (LLM-only vs Qloo+scoring vs full) — Level C item, design only.
-  4. Post-C extras, ALL parked: weight sandbox, run history, recompute endpoint (each needs explicit move-in).
-  5. G5 deployment, G6 freeze (README/LICENSE/demo script), submission.
-- **How to run:** `.venv` python ONLY (system python lacks deps): `.\.venv\Scripts\python.exe -m pytest -q` (80 tests, offline). Live: keys in gitignored `.env`, never in chat. Recorded fixtures in gitignored `tests/fixtures/recorded/`.
-- **Known issues:** one orphan Neon run row at ROBUSTNESS_ANALYSIS (interrupted persist, harmless); fixture path ties A/C at 60.0 (live evidence differentiates); suite takes ~25s (1000-scenario analysis inline).
+- **Gates:** G0 done · G1 PASSED (live) · G2 PASSED (human sign-off) · G3 open (paths built; live LLM test pending key) · G4 open (engine + wiring built; non-render acceptance checks ran locally; *render* and gate sign-off pending UI).
+- **Suite:** 85 passed, 0 failed, offline.
+- **New this session:**
+  - `LLM_BASE_URL` env var wired: `config.py` (default OpenAI URL, trailing slash normalized), `llm_client.complete_json(base_url=...)`, all four agent wrappers take `base_url`. OpenRouter free-tier switch = set `LLM_BASE_URL=https://openrouter.ai/api/v1` + an OpenRouter model id in `.env` — no code change. 5 new client tests (default URL, custom URL, slash normalization, 401, unusable output). Provider switch itself DEFERRED until the human brings a key.
+  - Minimal report UI DEFERRED by human decision: will be built later as a full Vercel-deployable page with user-supplied exact input requirements, after the last phase. Until then no static UI work.
+  - G4 non-render acceptance checks RAN (fixture-mode pipeline via API): sampler runs end-to-end (1000 scenarios, seeded); two identical briefs → byte-identical sensitivity block; weight-change flip demonstrable at engine level (unit tests) but NOT on fixture pipeline evidence (FixtureSource serves one search file per concept → A/C evidence-identical, A always first — explainable no-change). G4 gate stays OPEN (render part pending).
+- **Still left (unchanged):**
+  1. Live LLM test (needs LLM key in `.env`; OpenRouter supported — human chooses provider) → then G3 sign-off.
+  2. Minimal report UI — DEFERRED (see above); the handoff §20 Level-B "UI" item is now post-phase work.
+  3. Differentiated fixture evidence (optional but wanted for a meaningful sensitivity demo: today A/C tie-break makes the fixture demo static).
+  4. 3-way evaluation (Level C, design only).
+  5. Post-C extras, ALL parked: weight sandbox, run history, recompute endpoint (each needs explicit move-in).
+  6. G5 deployment (backend + host choice; Vercel page for frontend later), G6 freeze (README/LICENSE/demo script), submission.
+- **How to run:** `.venv\Scripts\python.exe -m pytest -q` (85 tests, offline). Live: keys in gitignored `.env`, never in chat. Recorded fixtures in gitignored `tests/fixtures/recorded/`.
+- **Known issues:** one orphan Neon run row at ROBUSTNESS_ANALYSIS (harmless); fixture A/C evidence-identical (above); test engines not always disposed in ad-hoc scripts (irrelevant to repo code).
 
 - **Date now:** 2026-10-16
 - **Current gate:** G2 PASSED (human sign-off; SCOPE.md gate line + decision log updated). G3 agent roles and critic due Oct 22 — agent paths built behind injectable hooks (session 10); live LLM test pending key.
@@ -41,6 +42,13 @@ Last updated: 2026-10-16 (session 12; build closed for the day — handoff below
 - **Next actions (in order):** 1) brief approval → live confirm on Neon 2) G2 sign-off + SCOPE gate line 3) sensitivity robustness.py (G4) 4) API routes 5) G3 agent wrappers.
 
 ## Sessions (newest first)
+
+### Session 13 — 2026-10-17 — OpenRouter wiring + UI deferral + G4 partial check
+
+- Human answers: OpenRouter support wired NOW (switch deferred until a key exists); minimal report UI DEFERRED entirely — human wants a full Vercel-deployable page with their own exact input requirements, built after the last phase.
+- `tests/unit/test_llm_client.py` (5 tests) first → `llm_client.complete_json(base_url=...)`, configs `llm_base_url` (`LLM_BASE_URL`, default OpenAI, slash-normalized), wrappers take `base_url`, `.env.example` documents the OpenRouter switch. Suite 80 → **85 passed**.
+- G4 non-render acceptance checks ran through the real API path (temp script): sampler end-to-end ✓, cross-run determinism ✓, engine-level weight-flip ✓ (unit tests), fixture-pipeline flip ✗ (one search fixture per concept → A/C evidence-identical; explainable no-change). Gate stays OPEN; render component pending UI.
+- Candidate follow-up flagged, needs human approval before any build: differentiated fixture evidence so the fixture demo can show a real weight-driven flip.
 
 ### Session 12 — 2026-10-16 — G4 sensitivity built, wired, day closed with handoff
 
@@ -203,3 +211,5 @@ Workflow conventions for every session:
 - 2026-10-16 | Level B/C boundary from handoff recorded; API endpoint + minimal UI moved into Oct-19 window | keep prior G2 scope | handoff §20 exit gate requires them; cut C before broken B | human
 - 2026-10-16 | Level B closure order: API first, sensitivity (G4) next, UI last | API→UI / UI→API | sampler output feeds the UI chart; UI risk accepted near Oct 19 | human
 - 2026-10-16 | G3 answers: provider = agent picks (OPENAI_API_KEY); researcher LLM-plans/code-enforces; analyst RICHER schema; critic 1 pass + 1 revision with injected CAUSAL_OVERCLAIM; LLM flag-gated default-off; Level C = agent drafts candidate set | alternatives per question | unblock G3 build without assumptions | human
+- 2026-10-17 | LLM base URL made configurable (`LLM_BASE_URL`, default OpenAI; OpenRouter free tier = URL + model id only) — support NOW, provider switch DEFERRED until human brings a key | switch now / defer entirely / full live test now | one env var now removes rebuild risk later; no key needed to wire | human
+- 2026-10-17 | Minimal report UI DEFERRED: to be built later as a full Vercel-deployable page with human-supplied exact input requirements, after the last phase | single page / two pages / build now | human's explicit direction (overrides the static-page plan and the UI-last order) | human
