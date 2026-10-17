@@ -3,7 +3,7 @@
 Read at the start of every session, alongside AGENTS.md, SCOPE.md, architecture.md, qloo-api-notes.md.
 Format: CURRENT STATE at top (always true for right now), then session entries below it, newest first.
 
-Last updated: 2026-10-17 (session 13; OpenRouter wired, UI deferred to post-phase Vercel page)
+Last updated: 2026-10-17 (session 14; OpenRouter live probe running — G3 live test in flight)
 
 ---
 
@@ -24,6 +24,9 @@ Last updated: 2026-10-17 (session 13; OpenRouter wired, UI deferred to post-phas
   6. G5 deployment (backend + host choice; Vercel page for frontend later), G6 freeze (README/LICENSE/demo script), submission.
 - **UI input contract (human-drafted 2026-10-17, agent-reviewed; for the future Vercel page):** ~6-field single form — 1) Market (required, free text), 2) Audience description (required, 1–2 sentences; context only, never scored), 3) Business goal (optional), 4) Hard constraints: up to 3, STRUCTURED attribute/value pairs only (dropdowns/checkboxes over attribute catalog: material, price_band, product_type) — free-text constraints cannot work, the gate needs exact pairs; 5) Weights: FOUR sliders C1/C2/C3/C5 (C4 stays gate-only, no slider, per the 2026-10-15 decision; engine rejects c4), suggested defaults C1 35 / C2 20 / C3 25 / C5 20, sum must display live and Submit locked until exactly 100%, free-move sliders + sum indicator preferred over continuous snap; 6) Three concept cards: name + description + structured attributes (same catalog as constraints, so constraint/attribute pairs can match). Backend already accepts all of this today; no schema change required.
 - **UI report/progress pages (human-drafted 2026-10-17; agent gap-map):** progress page polls GET /api/decision-runs/{id}, shows real workflow state names ("Retrieving evidence… Scoring… Drafting explanation… Validating claims…") + fixture banner. Report page: ranked concepts with scores; criterion breakdown; hard-constraint status; evidence drawer (Qloo entity names + match quality); critic findings (challenged / changed); sensitivity chart with the fixed phrase ("Concept X ranks first in Y% of scenarios"); missing-evidence list (what Qloo couldn't find). GAP 1 (trivial): GET bundle omits entity display names — evidence_json has them, add `entity_name` to bundle items. GAP 2 (architectural): POST /api/decision-runs is SYNCHRONOUS and persists only near completion, so there is no run_id to poll mid-run; progress page needs the POST to persist the run row first, return run_id immediately, and finish the pipeline in-process (FastAPI BackgroundTask suffices — no queues, no microservices).
+- **LLM provider (decided 2026-10-17):** human chose OpenRouter: researcher = `nvidia/nemotron-3-super-120b-a12b:free`, analyst+critic = `google/gemma-4-31b-it:free`, key under OPENROUTER_API_KEY (accepted via LLM_API_KEY fallback), LLM_BASE_URL=https://openrouter.ai/api/v1, leaderboards OFF by never sending HTTP-Referer/X-Title. Human constraint: 50 free-model calls/day (verified via GET /api/v1/key: 20 RPM, 50 RPD for non-credited accounts; provider-pool 429s do NOT consume the daily counter). Max-reasoning adapted: Nemotron = reasoning {max_tokens: 16384} (its effort list has no high/max), Gemma = effort high + max_tokens 24000 (effort "max" ≈95% of budget → would return no JSON). Reasoning_details passthrough not applicable (our calls are single-shot JSON).
+- **G3 live attempt 1 (probe run 95f68b47fe9948598492e80b272cb1c4, Neon):** live Qloo evidence, harness worked, all three LLM hooks FELL BACK to deterministic templates — reasons invisible at the time (coordinator swallows hook exceptions). Findings from diagnostics: (a) Nemotron plan was VALID except `filter.tags` came back as a LIST → pydantic rejected; fixed by transport-shape normalization in `draft_plan_llm._stringify_params` (lists → comma-joined strings; key allowlist unchanged; 3 offline adapter tests). (b) Gemma 429 rate-limit twice+ from free provider pool (capacity), not daily cap (counter read 2/50 used post-hoc). Fixed error transparency in `llm_client` (HTTP detail, finish_reason, content head — no secrets). Attempt-1 run remains an honest COMPLETED_WITH_LIMITATIONS artifact (winner C 84.75 > A 69.20, B INFEASIBLE, template claims, 0 findings).
+- Probe rerun in flight with paced hook retries (70s backoff on 429 before the coordinator's own retry). Budget spent as of rerun start: 7 OpenRouter calls (5 probe-1 + 2 diagnostic), daily counter read 2/50.
 - **How to run:** `.venv\Scripts\python.exe -m pytest -q` (85 tests, offline). Live: keys in gitignored `.env`, never in chat. Recorded fixtures in gitignored `tests/fixtures/recorded/`.
 - **Known issues:** one orphan Neon run row at ROBUSTNESS_ANALYSIS (harmless); fixture A/C evidence-identical (above); test engines not always disposed in ad-hoc scripts (irrelevant to repo code).
 
@@ -44,6 +47,14 @@ Last updated: 2026-10-17 (session 13; OpenRouter wired, UI deferred to post-phas
 - **Next actions (in order):** 1) brief approval → live confirm on Neon 2) G2 sign-off + SCOPE gate line 3) sensitivity robustness.py (G4) 4) API routes 5) G3 agent wrappers.
 
 ## Sessions (newest first)
+
+### Session 14 — 2026-10-17 — OpenRouter live switch + G3 live probe (in flight)
+
+- Human decided: OpenRouter free tier; researcher Nemotron-3-Super, analyst+critic Gemma-4-31B; stay off leaderboards; ≤50 free-model calls/day; "max reasoning" per agent; approvals: retries allowed on failure, live Qloo evidence, persist to Neon.
+- Verified from OpenRouter docs/catalog (0 budget calls): both model ids live, both support response_format JSON; Nemotron takes a direct reasoning token budget, Gemma effort-based (its "max" ≈95% of max_tokens → JSON starved, so effort high + max_tokens 24000); free limits 20 RPM / 50 RPD (non-credited); 429s from provider pool do not consume the daily counter; `GET /api/v1/key` reports free_model_daily_requests.
+- Built: reasoning+max_tokens on `complete_json` and all wrappers; `LLM_RESEARCHER_MODEL` config; `OPENROUTER_API_KEY` fallback in `config.py`; error details (HTTP bodies, finish_reason, content head) in `llm_client`; list-param normalization in `draft_plan_llm`; `scripts/llm_live_probe.py` (manual; budget cap; paced 429 retries; no attribution headers). `.env` config lines updated by agent (values never printed).
+- Tests: 85 → **96 passed** (8 llm_client, 5 config_llm, 3 llm adapters).
+- Probe attempt 1: all hooks fell back (Nemotron param shape + Gemma 429s); run persisted honestly; defects fixed (above). Attempt 2 running with pacing.
 
 ### Session 13 — 2026-10-17 — OpenRouter wiring + UI deferral + G4 partial check
 

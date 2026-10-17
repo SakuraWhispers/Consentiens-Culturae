@@ -3,6 +3,8 @@ and error mapping. Offline via httpx MockTransport."""
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -71,3 +73,55 @@ def test_unparseable_content_raises_named_error() -> None:
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(AgentLLMError, match="unusable output"):
             complete_json("k", "m", "sys", {"x": 1}, client=client)
+
+
+def _body_capture() -> tuple[httpx.MockTransport, list[dict]]:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _ok_response()
+
+    return httpx.MockTransport(handler), bodies
+
+
+def test_reasoning_and_max_tokens_sent_when_given() -> None:
+    transport, bodies = _body_capture()
+    with httpx.Client(transport=transport) as client:
+        complete_json(
+            "k", "m", "sys", {"x": 1},
+            client=client,
+            reasoning={"effort": "high"},
+            max_tokens=24000,
+        )
+    body = bodies[0]
+    assert body["reasoning"] == {"effort": "high"}
+    assert body["max_tokens"] == 24000
+
+
+def test_base_params_absent_by_default() -> None:
+    transport, bodies = _body_capture()
+    with httpx.Client(transport=transport) as client:
+        complete_json("k", "m", "sys", {"x": 1}, client=client)
+    body = bodies[0]
+    assert "reasoning" not in body
+    assert "max_tokens" not in body
+
+
+def test_no_leaderboard_headers_sent() -> None:
+    # Attribution headers (HTTP-Referer / X-Title) would count us for the
+    # OpenRouter leaderboards; the human asked to stay off them.
+    transport, bodies = _body_capture()
+    seen: dict[str, str] = {}
+
+    def handler2(request: httpx.Request) -> httpx.Response:
+        seen.update({k.lower(): v for k, v in request.headers.items() if k.lower() in
+                     ("http-referer", "x-title")})
+        bodies.append(json.loads(request.content))
+        return _ok_response()
+
+    with httpx.Client(transport=httpx.MockTransport(handler2)) as client:
+        complete_json("k", "m", "sys", {"x": 1}, client=client)
+    assert seen == {}, (
+        "OpenRouter attribution headers must not be sent (human: stay off leaderboards)"
+    )

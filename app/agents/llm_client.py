@@ -29,29 +29,41 @@ def complete_json(
     timeout_seconds: float = 30.0,
     client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
+    max_tokens: int | None = None,
+    reasoning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """POST one chat-completion request; return the parsed JSON object.
 
     Any OpenAI-compatible endpoint works (OpenAI default; OpenRouter via
     base_url="https://openrouter.ai/api/v1"). Keys and payloads travel in
-    headers/body only — never logged.
+    headers/body only — never logged. No OpenRouter attribution headers are
+    sent (HTTP-Referer/X-Title) — the human asked to stay off the leaderboards.
+    `max_tokens` and `reasoning` (e.g. {"effort": "high"} or {"max_tokens": N})
+    are forwarded verbatim when set; per OpenRouter, reasoning tokens count
+    against max_tokens, so callers must size max_tokens above the reasoning
+    budget or the final JSON gets truncated.
     """
     own_client = client is None
     url = f"{base_url.rstrip('/')}/chat/completions"
+    request_body: dict[str, Any] = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user_payload)[:12000]},
+        ],
+    }
+    if max_tokens is not None:
+        request_body["max_tokens"] = max_tokens
+    if reasoning is not None:
+        request_body["reasoning"] = reasoning
     http = client or httpx.Client(timeout=timeout_seconds)
     try:
         resp = http.post(
             url,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(user_payload)[:12000]},
-                ],
-            },
+            json=request_body,
         )
     except httpx.TimeoutException as exc:
         raise AgentLLMError(f"LLM timeout after {timeout_seconds}s") from exc
@@ -63,17 +75,34 @@ def complete_json(
     if resp.status_code in (401, 403):
         raise AgentLLMError("LLM rejected the key")
     if resp.status_code == 429:
-        raise AgentLLMError("LLM rate limited")
+        detail = resp.text[:300]
+        raise AgentLLMError(f"LLM rate limited: {detail}")
     if resp.status_code >= 400:
-        raise AgentLLMError(f"LLM HTTP {resp.status_code}")
+        detail = resp.text[:300]
+        raise AgentLLMError(f"LLM HTTP {resp.status_code}: {detail}")
     try:
         body = resp.json()
-        content = body["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
+        choice = body["choices"][0]
+        message = choice.get("message", {})
+        content = message.get("content")
+        finish_reason = choice.get("finish_reason")
     except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise AgentLLMError("LLM returned unusable output") from exc
+        raise AgentLLMError(
+            f"LLM returned unusable envelope: keys={list(body) if isinstance(body, dict) else type(body).__name__}"
+        ) from exc
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError) as exc:
+        raise AgentLLMError(
+            "LLM returned unusable output: "
+            f"finish_reason={finish_reason!r}, has_reasoning_field={'reasoning' in message}, "
+            f"content_head={(content or '')[:300]!r}"
+        ) from exc
     if not isinstance(parsed, dict):
-        raise AgentLLMError("LLM returned a non-object")
+        raise AgentLLMError(
+            f"LLM returned a non-object: finish_reason={finish_reason!r}, "
+            f"parsed_type={type(parsed).__name__}, content_head={(content or '')[:300]!r}"
+        )
     return parsed
 
 

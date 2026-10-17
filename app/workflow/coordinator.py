@@ -233,7 +233,9 @@ def run_decision(
                 limitations.append("agent plan fully rejected; deterministic plan used")
         except Exception as exc:
             calls = _plan_calls(brief, source)
-            limitations.append(f"researcher plan failed ({type(exc).__name__}); deterministic plan used")
+            limitations.append(
+                f"researcher plan failed ({type(exc).__name__}: {str(exc)[:180]}); deterministic plan used"
+            )
     else:
         calls = _plan_calls(brief, source)
     for owner_id, endpoint, params in calls:
