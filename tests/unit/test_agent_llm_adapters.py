@@ -75,6 +75,43 @@ _BARE_CLAIM = {
 }
 
 
+def test_strength_medium_synonym_normalized() -> None:
+    # Live-found: models sometimes write strength:'medium' (confidence's value
+    # bleeding into strength). The ONLY unambiguous synonym is medium→moderate;
+    # it is bridged transport-side. Anything else stays a hard rejection.
+    bad = {**_BARE_CLAIM, "strength": "medium"}
+    content = json.dumps([bad])
+    from app.agents.analyst import draft_claims_llm
+
+    with httpx.Client(transport=_handler(content)) as client:
+        draft = draft_claims_llm(
+            "k", "m",
+            {"A": {"rank": 1, "status": "RANKED", "weighted_total": 60.0}},
+            {"A": {"available": 5, "total": 5}},
+            [], {"c1": 1.0},
+            client=client,
+        )
+    assert [c.strength for c in draft.claims] == ["moderate"]
+
+
+def test_strength_outword_value_still_rejected() -> None:
+    bogus = {**_BARE_CLAIM, "strength": "rock-solid"}
+    content = json.dumps([bogus])
+    from pydantic import ValidationError as PydanticValidationError
+    from app.agents.analyst import draft_claims_llm
+
+    with httpx.Client(transport=_handler(content)) as client:
+        import pytest
+        with pytest.raises(PydanticValidationError):
+            draft_claims_llm(
+                "k", "m",
+                {"A": {"rank": 1, "status": "RANKED", "weighted_total": 60.0}},
+                {"A": {"available": 5, "total": 5}},
+                [], {"c1": 1.0},
+                client=client,
+            )
+
+
 def test_bare_top_level_claims_array_bridges_into_valid_draft() -> None:
     # Google gemma-4-26b live behavior: answers the claims prompt with a bare
     # JSON array instead of {"claims": [...]}. Bridge + pydantic validation.

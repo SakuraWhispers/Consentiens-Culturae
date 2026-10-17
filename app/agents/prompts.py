@@ -14,7 +14,9 @@ RULES:
 - The payload's evidence section contains AGGREGATE COUNTS ONLY (available/total) — it contains NO evidence ID list. Therefore evidence_ids MUST be an empty array []; do NOT invent, guess, or use placeholder IDs (digits are still invented IDs and will be rejected). Cite the evidence base in your text as a count ("40 of 40 evidence records available").
 - score_fields may reference computed score attributes like "A.weighted_total" or "B.rank" (concept_id.field).
 - Claims with no available evidence get strength weak and confidence low.
-- claim_type is observation (score/evidence fact), interpretation (labeled as such), or recommendation (screening next step only — never a purchase/success prediction).
+- claim_type MUST be one of: observation (a score/evidence fact), interpretation (labeled as such), recommendation (a screening next step ONLY — never a purchase or success prediction).
+- strength MUST be one of: strong, moderate, weak. ("medium" is NOT a strength value!)
+- confidence MUST be one of: high, medium, low.
 - audience_context is an optional NON-SCORED labeled note (max 280 chars). Never present it as a score input; never stereotype.
 - Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [], "score_fields": [...], "audience_context": ...}]}."""
 

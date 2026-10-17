@@ -46,6 +46,20 @@ def draft_plan_llm(
     return validate_plan(RetrievalPlan(calls=_stringify_params(parsed)))
 
 
+def _bridge_claim_synonyms(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Transport-side synonym bridge for claim envelope values.
+
+    Live finding: models sometimes write strength:"medium" (confidence's value
+    bleeding into strength). The ONLY unambiguous mapping is medium→moderate;
+    it is applied here so the strict pydantic schema judges CONTENT, not one
+    collateral word. All other values stay strict.
+    """
+    for claim in parsed.get("claims", []):
+        if claim.get("strength") == "medium":
+            claim["strength"] = "moderate"
+    return parsed
+
+
 def draft_claims_llm(
     api_key: str, model: str, score_summary: dict[str, Any],
     evidence_summary: dict[str, Any], limitations: list[str], weights: dict[str, float],
@@ -60,7 +74,7 @@ def draft_claims_llm(
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="claims",
     )
-    return AnalysisDraft(**parsed)
+    return AnalysisDraft(**_bridge_claim_synonyms(parsed))
 
 
 def review_claims_llm(
@@ -91,7 +105,7 @@ def revise_claims_llm(
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="claims",
     )
-    return AnalysisDraft(**parsed)
+    return AnalysisDraft(**_bridge_claim_synonyms(parsed))
 
 
 __all__ = ["draft_plan_llm", "draft_claims_llm", "review_claims_llm", "revise_claims_llm"]
