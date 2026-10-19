@@ -94,6 +94,10 @@ def main() -> int:
     #   surfaced error bodies will show it.
     if on_openrouter:
         researcher_gen = {"max_tokens": 32768, "reasoning": {"max_tokens": 16384}}
+    elif "generativelanguage" in researcher_base:
+        # Bisected for Google 26b: budgets above 16384 hit HTTP 500 on the
+        # compat layer; 16384 verified 200 + clean parse (diag5).
+        researcher_gen = {"max_tokens": 16384}
     else:
         researcher_gen = {"max_tokens": 32768}
     if on_google:
