@@ -223,5 +223,6 @@ tests/fixtures/recorded/
 
 # Streamlit
 .streamlit/secrets.toml
-.png 
-.fig 
+
+# website/design: reference assets only — screenshots and Figma source stay local
+website/design/

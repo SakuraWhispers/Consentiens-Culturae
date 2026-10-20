@@ -43,6 +43,27 @@ def create_app(
         source = FixtureSource(fixtures_dir or Path("tests/fixtures"))
 
     app = FastAPI(title="Consentiens-Culturae Decision Engine")
+
+    # CORS for the Next.js frontend during local development. Origins come from
+    # CORS_ORIGINS (comma-separated); the default is the Next dev server only.
+    # Never use "*" once real keys exist anywhere — this app has no secrets in
+    # the browser, but explicit origins keep future changes deliberate.
+    import os
+
+    cors_origins = [
+        o.strip() for o in
+        os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+        if o.strip()
+    ]
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
     app.dependency_overrides[get_deps] = lambda: RunDeps(
         engine=engine, source=source, scoring_version=scoring_version
     )

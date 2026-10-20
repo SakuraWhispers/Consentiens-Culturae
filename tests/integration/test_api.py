@@ -60,6 +60,34 @@ def test_health(tmp_path: Path) -> None:
     assert resp.json()["status"] == "ok"
 
 
+def test_cors_preflight_allows_next_dev_origin(tmp_path: Path) -> None:
+    # The frontend (localhost:3000) must be able to POST /decision-runs.
+    client = _client(tmp_path)
+    resp = client.options(
+        "/api/decision-runs",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.status_code == 200
+    assert "access-control-allow-origin" in resp.headers
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_cors_blocks_unlisted_origin(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.options(
+        "/api/decision-runs",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    origin = resp.headers.get("access-control-allow-origin")
+    assert origin != "https://evil.example"
+
+
 def test_post_run_returns_ranking_report(tmp_path: Path) -> None:
     resp = _client(tmp_path).post("/api/decision-runs", json=_brief_dict())
     assert resp.status_code == 200, resp.text
