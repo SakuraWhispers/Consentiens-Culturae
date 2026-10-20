@@ -48,8 +48,6 @@ def create_app(
     # CORS_ORIGINS (comma-separated); the default is the Next dev server only.
     # Never use "*" once real keys exist anywhere — this app has no secrets in
     # the browser, but explicit origins keep future changes deliberate.
-    import os
-
     cors_origins = [
         o.strip() for o in
         os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
