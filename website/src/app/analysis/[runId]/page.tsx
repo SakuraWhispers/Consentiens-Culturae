@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Logo } from "@/components/Logo";
+import { LogoBanner } from "@/components/LogoBanner";
 import { getRunBundle, RunBundle } from "@/lib/api";
 
 const CONCEPT_ACCENTS: Record<string, string> = {
@@ -76,13 +76,8 @@ function RunPage() {
       {/* Header (shared with Analysis) */}
       <header className="bg-cream">
         <div className="mx-auto flex max-w-6xl items-start justify-between px-6 py-5">
-          <div>
-            <Logo markClass="h-10 w-8" />
-            <p className="mt-2 font-serif text-lg text-ink">
-              Cultura ducit, ratio iudicat.
-            </p>
-          </div>
-          <nav className="flex gap-10 font-serif text-2xl">
+          <LogoBanner height={72} />
+          <nav className="flex gap-10 font-serif text-2xl pt-2">
             <Link href="/" className="text-ink/80 hover:text-ink">Home</Link>
             <Link href="/analysis" className="text-ink/80 hover:text-ink">Analysis</Link>
           </nav>

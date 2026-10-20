@@ -4,9 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.services.rate_limiter import reset_run_limiter
+
+
+@pytest.fixture(autouse=True)
+def _fresh_run_limiter():
+    # The limiter is process-global by design; each test gets a clean one so
+    # the 30s start-gap and daily cap cannot leak between tests.
+    reset_run_limiter()
+    yield
+    reset_run_limiter()
+
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 

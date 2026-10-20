@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { LogoBanner } from "@/components/LogoBanner";
 import { BriefPayload, HardConstraint, postRun } from "@/lib/api";
 import { CRITERIA } from "@/lib/criteria";
+import { squeezeWeights, Weights } from "@/lib/weights";
 
 const ACCENTS = ["#a6c3d8", "#292b43", "#baa2c5"] as const;
 
@@ -34,7 +35,7 @@ function Slider({
         type="range"
         min={0}
         max={100}
-        step={5}
+        step={1}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-3 w-full"
@@ -186,9 +187,12 @@ export default function AnalysisPage() {
     { name: "", description: "" },
     { name: "", description: "" },
   ]);
-  const [weights, setWeights] = useState<Record<string, number>>(
-    Object.fromEntries(CRITERIA.map((c) => [c.id, c.defaultPct]))
+  const [weights, setWeights] = useState<Weights>(
+    Object.fromEntries(CRITERIA.map((c) => [c.id, c.defaultPct])) as Weights
   );
+  function changeWeight(id: (typeof CRITERIA)[number]["id"], requested: number) {
+    setWeights((w) => squeezeWeights(w, id, requested));
+  }
   const [constraints, setConstraints] = useState<HardConstraint[]>([]);
   const [phase, setPhase] = useState<"setup" | "running" | "error">("setup");
   const [error, setError] = useState<string | null>(null);
@@ -354,7 +358,9 @@ export default function AnalysisPage() {
           <h2 className="font-serif text-4xl text-ink">Set your criteria</h2>
           <p className="mt-2 font-serif text-xl text-mistslate">
             Adjust the relative importance of the four weighted criteria. The
-            total must add to 100%.
+            four sliders always add to 100% — moving one automatically
+            redistributes the others in proportion, so the total never leaves
+            100.
           </p>
 
           <div className="mt-5 rounded-2xl border border-ink/25 bg-white p-6 shadow-sm">
@@ -364,9 +370,7 @@ export default function AnalysisPage() {
                   key={c.id}
                   c={c}
                   value={weights[c.id]}
-                  onChange={(v) =>
-                    setWeights((w) => ({ ...w, [c.id]: v }))
-                  }
+                  onChange={(v) => changeWeight(c.id, v)}
                 />
               ))}
             </div>
@@ -401,8 +405,9 @@ export default function AnalysisPage() {
 
           <p className="mt-5 font-serif text-base leading-relaxed text-mistslate">
             These are configuration controls, not concept scores. Results will
-            follow once your concepts and criteria are ready. A live run takes
-            about one to three minutes.
+            follow once your concepts and criteria are ready. A live run with
+            LLM explanations typically takes 5–15 minutes — please keep this
+            tab open until the results page loads.
           </p>
         </div>
       </div>

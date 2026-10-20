@@ -1,0 +1,220 @@
+"""G3 LLM hook wiring for the HTTP API path (API parity with the probe).
+
+Pure composition of tested pieces: the llm_client adapters, the researcher
+planner, coordinator contracts, and the two-pool Settings from app/config.py.
+The only new behavior is the transient-error paced retry shared by all hooks
+(free-pool 429s and Google 5xx blips waste instant retries; 2026-10-17 finding)
+and the owner attribution for search calls (probe logic, extracted).
+
+No exception is silently swallowed: what the hooks fail on, the coordinator
+records as a run limitation and the deterministic path takes over. Missing
+keys when LLM_ENABLED=true raise loudly (Route: no quiet budget lies).
+
+Secret handling: keys travel to the configured endpoints inside request
+headers only; they are never logged, printed, or embedded in results.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Callable
+
+import httpx  # noqa: F401  (kept: explicit dependency for provider timeouts)
+
+from app.agents.analyst import (
+    AnalysisDraft,
+    CriticOutput,
+    RetrievalPlan,
+    draft_claims_llm,
+    draft_plan_llm,
+    review_claims_llm,
+    revise_claims_llm,
+)
+from app.agents.llm_client import AgentLLMError
+from app.config import Settings, llm_api_key as _llm_api_key
+
+TRANSIENT_MARKERS = ("rate limited", "HTTP 5", "UNAVAILABLE", "Internal error")
+
+
+def paced(fn: Callable[..., Any], *, wait_seconds: float = 70.0) -> Callable[..., Any]:
+    """Wrap one hook call with a single paced retry on transient errors.
+
+    The coordinator runs each hook at most twice (its own retry-once); this
+    wrapper adds at most one 70s pause between provider-side 429/5xx so an
+    instant re-hit of a saturated pool is not wasted. Non-transient errors
+    (schema, auth, semantics) re-raise untouched.
+    """
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except AgentLLMError as exc:
+            if not any(m in str(exc) for m in TRANSIENT_MARKERS):
+                raise
+        time.sleep(wait_seconds)
+        return fn(*args, **kwargs)
+
+    return call
+
+
+def resolve_pools(settings: Settings) -> dict[str, dict[str, Any]]:
+    """Resolve the two pools' model/base/key/generation from Settings.
+
+    Generation budgets are the live-bisected values (2026-10-17/19 findings):
+    OpenRouter keeps its reasoning-budget dance; Google's compat layer 500s
+    above max_tokens 16384 and does not accept the OpenRouter `reasoning` key.
+    """
+    base_url = settings.llm_base_url
+    on_google = "generativelanguage" in base_url
+    on_openrouter = "openrouter" in base_url
+    if on_google:
+        main_gen: dict[str, Any] = {"max_tokens": 16384}
+    elif on_openrouter:
+        main_gen = {"max_tokens": 24000, "reasoning": {"effort": "high"}}
+    else:
+        main_gen = {"max_tokens": 24000}
+
+    researcher_base = settings.researcher_base_url()
+    res_on_google = "generativelanguage" in researcher_base
+    res_on_openrouter = "openrouter" in researcher_base
+    if res_on_openrouter:
+        researcher_gen: dict[str, Any] = {
+            "max_tokens": 32768,
+            "reasoning": {"max_tokens": 16384},
+        }
+    elif res_on_google:
+        researcher_gen = {"max_tokens": 16384}
+    else:
+        researcher_gen = {"max_tokens": 32768}
+
+    return {
+        "main": {
+            "model": settings.llm_model,
+            "base_url": base_url,
+            "api_key": _llm_api_key(settings.llm_provider),
+            "gen": main_gen,
+        },
+        "researcher": {
+            "model": settings.llm_researcher_model or settings.llm_model,
+            "base_url": researcher_base,
+            "api_key": settings.researcher_api_key(),
+            "gen": researcher_gen,
+        },
+    }
+
+
+def attribute_search_calls(
+    calls: list[dict[str, Any]], concepts: list[tuple[str, str]]
+) -> list[tuple[Any, str, dict[str, str]]]:
+    """Attach owner attribution to a validated plan's calls (probe logic).
+
+    A search whose query matches exactly one concept name belongs to that
+    concept; everything else is shared market evidence. The coordinator
+    enforces the allowlist and call budget on the returned tuples.
+    """
+    lowered = {name.lower(): cid for cid, name in concepts if name}
+    out: list[tuple[Any, str, dict[str, str]]] = []
+    for call in calls:
+        owner = None
+        if call["endpoint"] == "search":
+            q = (call["params"].get("query") or "").lower()
+            hits = [cid for name, cid in lowered.items() if name in q]
+            if len(hits) == 1:
+                owner = hits[0]
+        out.append((owner, call["endpoint"], dict(call["params"])))
+    return out
+
+
+def build_hooks(
+    settings: Settings, concepts: list[tuple[str, str]]
+) -> dict[str, Callable[..., Any]]:
+    """Build the four coordinators hooks from the two-pool configuration.
+
+    `concepts` is the brief's [(concept_id, name), ...] list, used for search
+    ownership attribution. Raises loudly when LLM is enabled but a pool has
+    no key — misconfiguration must be loud, never a silent template fallback.
+    """
+    if not settings.llm_enabled:
+        raise ValueError("LLM is not enabled")
+    pools = resolve_pools(settings)
+    main_key = pools["main"]["api_key"]
+    researcher_key = pools["researcher"]["api_key"]
+    missing = [
+        pool for pool, key in (("main", main_key), ("researcher", researcher_key))
+        if not key
+    ]
+    if missing:
+        raise ValueError(
+            f"LLM_ENABLED=true but no API key for pool(s): {', '.join(missing)}"
+        )
+
+    m = pools["main"]
+    r = pools["researcher"]
+    # Reasoning-heavy calls routinely exceed the 30s default; the live floor
+    # for paced Google calls is 300s (probe: analyst still generating at 180s).
+    timeout = max(settings.llm_timeout_seconds, 300.0)
+
+    def researcher_fn(names: list[str], tag_urn: str) -> list[tuple[Any, str, dict[str, str]]]:
+        def once() -> RetrievalPlan:
+            return draft_plan_llm(
+                researcher_key, r["model"], names, tag_urn,
+                timeout=timeout, base_url=r["base_url"],
+                max_tokens=r["gen"]["max_tokens"], reasoning=r["gen"].get("reasoning"),
+            )
+
+        plan = paced(once)()
+        return attribute_search_calls(
+            [c.model_dump() for c in plan.calls], concepts
+        )
+    def analyst_fn(
+        score_summary: dict[str, Any],
+        evidence_summary: dict[str, Any],
+        limitations: list[str],
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        def once() -> list[dict[str, Any]]:
+            draft: AnalysisDraft = draft_claims_llm(
+                main_key, m["model"], score_summary, evidence_summary,
+                limitations, weights,
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+            )
+            return [c.model_dump() for c in draft.claims]
+
+        return paced(once)()
+
+    def critic_fn(
+        claims: list[dict[str, Any]],
+        score_summary: dict[str, Any],
+        known_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        def once() -> CriticOutput:
+            return review_claims_llm(
+                main_key, m["model"], claims, score_summary, sorted(known_ids),
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+            )
+
+        return [f.model_dump() for f in paced(once)().findings]
+
+    def revise_fn(
+        claims: list[dict[str, Any]], findings: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        def once() -> AnalysisDraft:
+            return revise_claims_llm(
+                main_key, m["model"], claims, findings,
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+            )
+
+        return [c.model_dump() for c in paced(once)().claims]
+
+    return {
+        "researcher_fn": researcher_fn,
+        "analyst_fn": analyst_fn,
+        "critic_fn": critic_fn,
+        "revise_fn": revise_fn,
+    }
+
+
+__all__ = ["build_hooks", "paced", "resolve_pools", "attribute_search_calls"]
