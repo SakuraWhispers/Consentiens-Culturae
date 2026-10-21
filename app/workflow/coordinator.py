@@ -14,7 +14,7 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
-from app.agents.schemas import ALLOWED_PARAMS, ALLOWLISTED_ENDPOINTS
+from app.agents.researcher import PlanRejectedError, validate_call
 from app.integrations.qloo_adapter import EvidenceSource, FixtureError, QlooPayload
 from app.integrations.qloo_client import QlooError
 from app.schemas.brief import DecisionBrief
@@ -74,16 +74,20 @@ def _validate_agent_plan(
     known_concepts: list[str],
     max_calls: int,
 ) -> tuple[list[tuple[str | None, str, dict[str, str]]], list[str]]:
-    """Code-side enforcement for researcher-proposed plans."""
+    """Code-side enforcement for researcher-proposed plans.
+
+    Per CALL, not per plan: one malformed call is dropped and reported, the
+    rest of the plan survives (live finding 2026-10-20: a param named
+    "filter" made the whole plan unusable and the deterministic planner took
+    over). The rules live in app.agents.researcher.validate_call so the
+    agent layer and this layer cannot drift apart.
+    """
     limitations: list[str] = []
     kept: list[tuple[str | None, str, dict[str, str]]] = []
     for owner, endpoint, params in plan:
-        if endpoint not in ALLOWLISTED_ENDPOINTS:
-            limitations.append(f"rejected planned call: endpoint {endpoint!r} not on allowlist")
-            continue
-        bad = [k for k in params if k not in ALLOWED_PARAMS[endpoint]]
-        if bad:
-            limitations.append(f"rejected planned call: params {bad} not allowed for {endpoint}")
+        errors = validate_call(endpoint, params)
+        if errors:
+            limitations.append(f"rejected planned call: {errors[0]}")
             continue
         if owner is not None and owner not in known_concepts:
             limitations.append(f"rejected planned call: unknown concept {owner!r}")
@@ -93,6 +97,90 @@ def _validate_agent_plan(
         limitations.append(f"plan truncated to call budget: {len(kept)} > {max_calls}")
         kept = kept[:max_calls]
     return kept, limitations
+
+
+def _unwrap_hook_output(value: Any) -> tuple[list[Any], list[str], str]:
+    """Hook results may be a plain list (legacy) or an AgentOutput carrier.
+
+    Returns (items, rejection_notes, raw_head). Nothing is ever silently
+    dropped: the notes travel to the run's limitations and the raw payload
+    (truncated) is persisted as a workflow event.
+    """
+    items = getattr(value, "items", None)
+    if items is None:
+        return list(value), [], ""
+    return (
+        list(items),
+        list(getattr(value, "rejected", []) or []),
+        str(getattr(value, "raw_head", "") or ""),
+    )
+
+
+def _accepts_repair_hint(fn: Any) -> bool:
+    """True when the hook can receive the code's rejection reason."""
+    import inspect
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    if "repair_hint" in sig.parameters:
+        return True
+    return any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+
+
+def _call_hook(fn: Any, args: tuple, hint: str | None) -> Any:
+    """Call a hook, passing the repair hint when the hook supports it."""
+    if hint and _accepts_repair_hint(fn):
+        return fn(*args, repair_hint=hint)
+    return fn(*args)
+
+
+def _repair_hint(exc: Exception) -> str:
+    """Turn a validation failure into an instruction the model can act on.
+
+    Live finding (2026-10-20): the retry re-sent the IDENTICAL prompt at
+    temperature 0, so the model produced the identical invalid output and the
+    second attempt was wasted. The retry now carries the reason.
+    """
+    return (
+        "Your previous output was rejected by code validation and was discarded. "
+        f"Reason: {str(exc)[:300]}. "
+        "Return the FULL corrected JSON, using only the documented field names "
+        "and the allowed values listed in the instructions."
+    )
+
+
+def _salvage_claims(
+    claims: list[dict[str, Any]], known_concepts: list[str], known_ids: set[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Keep the claims that satisfy the hard invariants, report the rest."""
+    kept: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    for claim in claims:
+        try:
+            _validate_claims([claim], known_concepts, known_ids)
+        except ValueError as exc:
+            rejected.append(f"claim {claim.get('claim_id')!r}: {exc}")
+            continue
+        kept.append(claim)
+    return kept, rejected
+
+
+def _salvage_findings(
+    findings: list[dict[str, Any]], known_concepts: list[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Keep the findings that satisfy the hard invariants, report the rest."""
+    kept: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    for finding in findings:
+        try:
+            _validate_critic_output([finding], known_concepts)
+        except ValueError as exc:
+            rejected.append(f"finding {finding.get('issue_code')!r}: {exc}")
+            continue
+        kept.append(finding)
+    return kept, rejected
 
 
 _CAUSAL_PHRASES = (
@@ -166,12 +254,22 @@ def _validate_claims(
 def _validate_critic_output(
     findings: list[dict[str, Any]], known_concepts: list[str]
 ) -> list[dict[str, Any]]:
-    """Hard invariants for critic output: closed issue codes, known concepts."""
+    """Hard invariants for critic output: closed issue codes, closed severity
+    and action values, known concepts.
+
+    The severity check is repeated here (the agent wrapper applies the
+    pydantic schema as well) so a hook that returns raw dicts cannot smuggle
+    a value the report does not define.
+    """
     from app.agents.schemas import ISSUE_CODES
 
     for finding in findings:
         if finding.get("issue_code") not in ISSUE_CODES:
             raise ValueError(f"unknown issue code {finding.get('issue_code')!r}")
+        if finding.get("severity") not in ("major", "minor", "info"):
+            raise ValueError(
+                f"unknown severity {finding.get('severity')!r} (expected major, minor or info)"
+            )
         if finding.get("affected_concept_id") not in known_concepts:
             raise ValueError(f"finding targets unknown concept {finding.get('affected_concept_id')!r}")
         if finding.get("suggested_action") not in ("remove", "qualify", "revise_wording"):
@@ -196,8 +294,15 @@ def run_decision(
     researcher_fn(names, tag_urn) -> plan list; analyst_fn(scores, evidence,
     limitations, weights) -> claim dicts; critic_fn(claims, scores, known_ids)
     -> finding dicts; revise_fn(claims, findings) -> revised claim dicts.
-    Any hook failure is retried once, then replaced by the deterministic
-    fallback with a recorded limitation.
+    A hook may also return an AgentOutput carrier (items + rejection notes +
+    a truncated raw payload); a plain list still works.
+
+    Resilience (2026-10-20): each hook is tried at most twice, and the
+    second attempt is INFORMED — the validation error is handed back so the
+    model can correct itself instead of repeating the same invalid output.
+    Invalid individual items are dropped and reported as limitations; the
+    deterministic fallback takes over only when an entire stage produced
+    nothing usable.
     """
     run_id = create_run(
         engine,
@@ -214,6 +319,12 @@ def run_decision(
         nonlocal state, seq
         state, seq = _move(engine, run_id, seq, state, target)
 
+    def note(event_type: str, payload: dict[str, Any]) -> None:
+        """Record a non-state event (e.g. a rejected agent output) for audit."""
+        nonlocal seq
+        seq += 1
+        add_workflow_event(engine, run_id, seq, state.value, event_type, payload)
+
     move(RunState.VALIDATING_INPUT)
     move(RunState.RETRIEVING_EVIDENCE)
 
@@ -222,20 +333,65 @@ def run_decision(
     concept_names = {c.concept_id: c.name for c in brief.concepts}
     concept_ids = [c.concept_id for c in brief.concepts]
     if researcher_fn is not None:
-        try:
-            proposed = researcher_fn(
-                [c.name for c in brief.concepts], getattr(source, "tag_urn", None)
+        # The researcher gets the same two chances as the other agents, and
+        # the second one is INFORMED: the rejection reason is handed back so
+        # the model can fix the plan instead of repeating it.
+        plan_hint: str | None = None
+        last_plan_error: Exception | None = None
+        calls: list[tuple[str | None, str, dict[str, str]]] = []
+        for _attempt in range(2):
+            try:
+                proposed = _call_hook(
+                    researcher_fn,
+                    ([c.name for c in brief.concepts], getattr(source, "tag_urn", None)),
+                    plan_hint,
+                )
+            except Exception as exc:
+                last_plan_error = exc
+                plan_hint = _repair_hint(exc)
+                continue
+            proposed_calls, agent_rejected, raw_head = _unwrap_hook_output(proposed)
+            calls, plan_limits = _validate_agent_plan(
+                proposed_calls, concept_ids, max_live_calls
             )
-            calls, plan_limits = _validate_agent_plan(proposed, concept_ids, max_live_calls)
-            limitations.extend(plan_limits)
-            if not calls:
-                calls = _plan_calls(brief, source)
-                limitations.append("agent plan fully rejected; deterministic plan used")
-        except Exception as exc:
+            if calls:
+                limitations.extend(plan_limits)
+                for note_text in agent_rejected:
+                    limitations.append(f"researcher plan: {note_text[:160]}")
+                if agent_rejected:
+                    note(
+                        "agent_output_rejected",
+                        {
+                            "stage": "researcher",
+                            "rejected": agent_rejected,
+                            "raw_head": raw_head[:600],
+                        },
+                    )
+                break
+            plan_hint = (
+                "Your previous plan was rejected: "
+                + "; ".join((plan_limits + agent_rejected)[:5])[:300]
+            )
+            last_plan_error = PlanRejectedError(plan_hint)
+        if not calls:
             calls = _plan_calls(brief, source)
             limitations.append(
-                f"researcher plan failed ({type(exc).__name__}: {str(exc)[:180]}); deterministic plan used"
+                f"researcher plan failed ({type(last_plan_error).__name__}: "
+                f"{str(last_plan_error)[:180]}); deterministic plan used"
             )
+        elif not any(endpoint == "insights" for _, endpoint, _ in calls):
+            # C3 (market relevance) needs the shared insights call. If the
+            # agent's insights call did not survive, use the deterministic
+            # one rather than silently losing the market evidence.
+            deterministic_insights = [
+                call for call in _plan_calls(brief, source) if call[1] == "insights"
+            ]
+            if deterministic_insights:
+                calls.extend(deterministic_insights)
+                limitations.append(
+                    "researcher plan had no usable insights call; "
+                    "deterministic market-insights call added"
+                )
     else:
         calls = _plan_calls(brief, source)
     for owner_id, endpoint, params in calls:
@@ -360,18 +516,42 @@ def run_decision(
     if analyst_fn is not None:
         claims = None
         last_error: Exception | None = None
-        for _ in range(2):
+        analyst_hint: str | None = None
+        for _attempt in range(2):
             try:
-                candidate = analyst_fn(
-                    score_summary, evidence_summary, limitations, brief.weights.as_dict()
+                out = _call_hook(
+                    analyst_fn,
+                    (score_summary, evidence_summary, limitations, brief.weights.as_dict()),
+                    analyst_hint,
                 )
-                claims = _validate_claims(
+                candidate, agent_rejected, raw_head = _unwrap_hook_output(out)
+                good, bad = _salvage_claims(
                     [dict(c) for c in candidate], concept_ids, known_ids
                 )
+                rejected_notes = list(agent_rejected) + list(bad)
+                if not good:
+                    raise ValueError("analyst output had no valid claims")
+                claims = good
+                if rejected_notes:
+                    limitations.append(
+                        f"analyst output: {len(rejected_notes)} claim(s) rejected by "
+                        f"validation, {len(good)} kept"
+                    )
+                    for note_text in rejected_notes:
+                        limitations.append(f"analyst claim rejected: {note_text[:160]}")
+                    note(
+                        "agent_output_rejected",
+                        {
+                            "stage": "analyst",
+                            "rejected": rejected_notes,
+                            "raw_head": raw_head[:600],
+                        },
+                    )
                 break
             except Exception as exc:
                 claims = None
                 last_error = exc
+                analyst_hint = _repair_hint(exc)
         if claims is None:
             analyst_llm = False
             limitations.append(
@@ -388,14 +568,46 @@ def run_decision(
     if critic_fn is not None:
         findings = None
         last_error = None
-        for _ in range(2):
+        critic_hint: str | None = None
+        for _attempt in range(2):
             try:
-                candidate = critic_fn(claims, score_summary, sorted(known_ids))
-                findings = _validate_critic_output([dict(f) for f in candidate], concept_ids)
+                out = _call_hook(
+                    critic_fn, (claims, score_summary, sorted(known_ids)), critic_hint
+                )
+                candidate, agent_rejected, raw_head = _unwrap_hook_output(out)
+                good, bad = _salvage_findings(
+                    [dict(f) for f in candidate], concept_ids
+                )
+                rejected_notes = list(agent_rejected) + list(bad)
+                if not good and rejected_notes:
+                    # Everything the critic produced was unusable: the
+                    # deterministic checks are the safety net, so the stage
+                    # fails and the retry/fallback path takes over.
+                    raise ValueError(
+                        f"critic output had no valid findings "
+                        f"({len(rejected_notes)} rejected)"
+                    )
+                findings = good
+                if rejected_notes:
+                    limitations.append(
+                        f"critic output: {len(rejected_notes)} finding(s) rejected by "
+                        f"validation, {len(good)} kept"
+                    )
+                    for note_text in rejected_notes:
+                        limitations.append(f"critic finding rejected: {note_text[:160]}")
+                    note(
+                        "agent_output_rejected",
+                        {
+                            "stage": "critic",
+                            "rejected": rejected_notes,
+                            "raw_head": raw_head[:600],
+                        },
+                    )
                 break
             except Exception as exc:
                 findings = None
                 last_error = exc
+                critic_hint = _repair_hint(exc)
         if findings is None:
             critic_llm = False
             limitations.append(
@@ -413,16 +625,38 @@ def run_decision(
         move(RunState.REVISING)
         revised = None
         last_error = None
-        for _ in range(2):
+        revise_hint: str | None = None
+        for _attempt in range(2):
             try:
-                candidate = revise_fn(claims, findings)
-                revised = _validate_claims(
+                out = _call_hook(revise_fn, (claims, findings), revise_hint)
+                candidate, agent_rejected, raw_head = _unwrap_hook_output(out)
+                good, bad = _salvage_claims(
                     [dict(c) for c in candidate], concept_ids, known_ids
                 )
+                rejected_notes = list(agent_rejected) + list(bad)
+                if not good:
+                    raise ValueError("revision had no valid claims")
+                revised = good
+                if rejected_notes:
+                    limitations.append(
+                        f"revision output: {len(rejected_notes)} claim(s) rejected by "
+                        f"validation, {len(good)} kept"
+                    )
+                    for note_text in rejected_notes:
+                        limitations.append(f"revised claim rejected: {note_text[:160]}")
+                    note(
+                        "agent_output_rejected",
+                        {
+                            "stage": "revision",
+                            "rejected": rejected_notes,
+                            "raw_head": raw_head[:600],
+                        },
+                    )
                 break
             except Exception as exc:
                 revised = None
                 last_error = exc
+                revise_hint = _repair_hint(exc)
         if revised is not None:
             claims = revised
             revision_count = 1

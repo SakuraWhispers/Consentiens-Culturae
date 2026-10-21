@@ -7,8 +7,15 @@ from app.agents.analyst import (
     revise_claims_llm,
 )
 from app.agents.llm_client import AgentLLMError, complete_json
-from app.agents.researcher import PlanRejectedError, researcher_fallback, validate_plan
+from app.agents.researcher import (
+    PlanRejectedError,
+    researcher_fallback,
+    salvage_calls,
+    validate_call,
+    validate_plan,
+)
 from app.agents.schemas import (
+    AgentOutput,
     AnalysisDraft,
     CriticOutput,
     RetrievalPlan,
@@ -17,6 +24,7 @@ from app.agents.schemas import (
 
 __all__ = [
     "AgentLLMError",
+    "AgentOutput",
     "PlanRejectedError",
     "complete_json",
     "draft_claims_llm",
@@ -24,6 +32,8 @@ __all__ = [
     "review_claims_llm",
     "revise_claims_llm",
     "researcher_fallback",
+    "salvage_calls",
+    "validate_call",
     "validate_plan",
     "AnalysisDraft",
     "CriticOutput",

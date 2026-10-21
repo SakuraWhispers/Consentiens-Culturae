@@ -31,6 +31,7 @@ from app.agents.analyst import (
     revise_claims_llm,
 )
 from app.agents.llm_client import AgentLLMError
+from app.agents.schemas import AgentOutput
 from app.config import Settings, llm_api_key as _llm_api_key
 
 TRANSIENT_MARKERS = ("rate limited", "HTTP 5", "UNAVAILABLE", "Internal error")
@@ -154,60 +155,90 @@ def build_hooks(
     # for paced Google calls is 300s (probe: analyst still generating at 180s).
     timeout = max(settings.llm_timeout_seconds, 300.0)
 
-    def researcher_fn(names: list[str], tag_urn: str) -> list[tuple[Any, str, dict[str, str]]]:
+    def researcher_fn(
+        names: list[str], tag_urn: str, repair_hint: str | None = None
+    ) -> AgentOutput:
         def once() -> RetrievalPlan:
             return draft_plan_llm(
                 researcher_key, r["model"], names, tag_urn,
                 timeout=timeout, base_url=r["base_url"],
                 max_tokens=r["gen"]["max_tokens"], reasoning=r["gen"].get("reasoning"),
+                repair_hint=repair_hint,
             )
 
         plan = paced(once)()
-        return attribute_search_calls(
-            [c.model_dump() for c in plan.calls], concepts
+        return AgentOutput(
+            items=attribute_search_calls(
+                [c.model_dump() for c in plan.calls], concepts
+            ),
+            rejected=list(plan.rejected),
+            raw_head=plan.raw_head,
         )
+
     def analyst_fn(
         score_summary: dict[str, Any],
         evidence_summary: dict[str, Any],
         limitations: list[str],
         weights: dict[str, float],
-    ) -> list[dict[str, Any]]:
-        def once() -> list[dict[str, Any]]:
+        repair_hint: str | None = None,
+    ) -> AgentOutput:
+        def once() -> AnalysisDraft:
             draft: AnalysisDraft = draft_claims_llm(
                 main_key, m["model"], score_summary, evidence_summary,
                 limitations, weights,
                 timeout=timeout, base_url=m["base_url"],
                 max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
             )
-            return [c.model_dump() for c in draft.claims]
+            return draft
 
-        return paced(once)()
+        draft = paced(once)()
+        return AgentOutput(
+            items=[c.model_dump() for c in draft.claims],
+            rejected=list(draft.rejected),
+            raw_head=draft.raw_head,
+        )
 
     def critic_fn(
         claims: list[dict[str, Any]],
         score_summary: dict[str, Any],
         known_ids: list[str],
-    ) -> list[dict[str, Any]]:
+        repair_hint: str | None = None,
+    ) -> AgentOutput:
         def once() -> CriticOutput:
             return review_claims_llm(
                 main_key, m["model"], claims, score_summary, sorted(known_ids),
                 timeout=timeout, base_url=m["base_url"],
                 max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
             )
 
-        return [f.model_dump() for f in paced(once)().findings]
+        out = paced(once)()
+        return AgentOutput(
+            items=[f.model_dump() for f in out.findings],
+            rejected=list(out.rejected),
+            raw_head=out.raw_head,
+        )
 
     def revise_fn(
-        claims: list[dict[str, Any]], findings: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+        claims: list[dict[str, Any]],
+        findings: list[dict[str, Any]],
+        repair_hint: str | None = None,
+    ) -> AgentOutput:
         def once() -> AnalysisDraft:
             return revise_claims_llm(
                 main_key, m["model"], claims, findings,
                 timeout=timeout, base_url=m["base_url"],
                 max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
             )
 
-        return [c.model_dump() for c in paced(once)().claims]
+        out = paced(once)()
+        return AgentOutput(
+            items=[c.model_dump() for c in out.claims],
+            rejected=list(out.rejected),
+            raw_head=out.raw_head,
+        )
 
     return {
         "researcher_fn": researcher_fn,

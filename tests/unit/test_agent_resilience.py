@@ -75,7 +75,7 @@ def test_plan_search_q_param_renamed_to_query() -> None:
 def test_plan_normalization_cannot_smuggle_unknown_keys() -> None:
     # Normalization renames known shapes only; unknown keys are still rejected.
     content = json.dumps({"calls": [
-        {"endpoint": "search", "params": {"query": "x", "evil_url": "https://x.test"}}},
+        {"endpoint": "search", "params": {"query": "x", "evil_url": "https://x.test"}},
     ]})
     with pytest.raises(PlanRejectedError):
         _plan(content)
@@ -137,19 +137,19 @@ def _critic(content: str):
 
 
 def test_critic_severity_medium_bridged_to_minor() -> None:
-    content = json.dumps({**_FINDING, "severity": "medium"})
+    content = json.dumps({"findings": [{**_FINDING, "severity": "medium"}]})
     out = _critic(content)
     assert [f.severity for f in out.findings] == ["minor"]
 
 
 def test_critic_lowercase_issue_code_normalized() -> None:
-    content = json.dumps({**_FINDING, "issue_code": "unsupported_claim"})
+    content = json.dumps({"findings": [{**_FINDING, "issue_code": "unsupported_claim"}]})
     out = _critic(content)
     assert [f.issue_code for f in out.findings] == ["UNSUPPORTED_CLAIM"]
 
 
 def test_critic_action_synonym_bridged() -> None:
-    content = json.dumps({**_FINDING, "suggested_action": "reword"})
+    content = json.dumps({"findings": [{**_FINDING, "suggested_action": "reword"}]})
     out = _critic(content)
     assert [f.suggested_action for f in out.findings] == ["revise_wording"]
 
@@ -166,7 +166,7 @@ def test_critic_one_bad_finding_dropped_valid_ones_kept() -> None:
 
 
 def test_critic_all_findings_invalid_still_raises() -> None:
-    content = json.dumps({**_FINDING, "severity": "catastrophic"})
+    content = json.dumps({"findings": [{**_FINDING, "severity": "catastrophic"}]})
     with pytest.raises(PydanticValidationError):
         _critic(content)
 

@@ -35,6 +35,18 @@ from app.agents.schemas import (
 
 RAW_HEAD_LIMIT = 600
 
+# A repair attempt re-sends the same prompt with the validation error attached.
+# Temperature 0 would reproduce the identical (invalid) answer, so the repair
+# attempt samples slightly instead of repeating itself.
+REPAIR_TEMPERATURE = 0.3
+
+
+def _with_hint(payload: dict[str, Any], hint: str | None) -> dict[str, Any]:
+    """Attach the code's rejection reason so the model can correct itself."""
+    if not hint:
+        return payload
+    return {**payload, "previous_output_rejected": hint}
+
 
 def _raw_head(parsed: dict[str, Any]) -> str:
     """Truncated copy of the model payload for diagnosis (never secrets)."""
@@ -113,12 +125,16 @@ def draft_plan_llm(
     timeout: float = 30.0, client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
 ) -> RetrievalPlan:
     parsed = complete_json(
         api_key, model, RESEARCHER_SYSTEM,
-        {"concepts": concept_names, "tag_urn": tag_urn, "max_calls": 10},
+        _with_hint(
+            {"concepts": concept_names, "tag_urn": tag_urn, "max_calls": 10}, repair_hint
+        ),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="calls",
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
     )
     kept, rejected = salvage_calls(_normalize_calls(parsed))
     if not kept:
@@ -270,13 +286,18 @@ def draft_claims_llm(
     timeout: float = 30.0, client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
 ) -> AnalysisDraft:
     parsed = complete_json(
         api_key, model, ANALYST_SYSTEM,
-        {"scores": score_summary, "evidence": evidence_summary,
-         "limitations": limitations, "weights": weights},
+        _with_hint(
+            {"scores": score_summary, "evidence": evidence_summary,
+             "limitations": limitations, "weights": weights},
+            repair_hint,
+        ),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="claims",
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
     )
     parsed = _bridge_claim_synonyms(parsed)
     claims, rejected, first_error = _salvage_items(
@@ -295,12 +316,17 @@ def review_claims_llm(
     timeout: float = 30.0, client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
 ) -> CriticOutput:
     parsed = complete_json(
         api_key, model, CRITIC_SYSTEM,
-        {"claims": claims, "scores": score_summary, "known_evidence_ids": evidence_ids},
+        _with_hint(
+            {"claims": claims, "scores": score_summary, "known_evidence_ids": evidence_ids},
+            repair_hint,
+        ),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="findings",
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
     )
     parsed = _bridge_critic_synonyms(parsed)
     findings, rejected, first_error = _salvage_items(
@@ -317,12 +343,14 @@ def revise_claims_llm(
     timeout: float = 30.0, client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
 ) -> AnalysisDraft:
     parsed = complete_json(
         api_key, model, REVISION_SYSTEM,
-        {"claims": claims, "findings": findings},
+        _with_hint({"claims": claims, "findings": findings}, repair_hint),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="claims",
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
     )
     parsed = _bridge_claim_synonyms(parsed)
     claims_out, rejected, first_error = _salvage_items(

@@ -255,7 +255,8 @@ def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
                 for r in s.query(ScoreSnapshot).filter_by(run_id=run_id).all()
             ],
             "events": [
-                {"sequence_number": e.sequence_number, "state": e.state, "event_type": e.event_type}
+                {"sequence_number": e.sequence_number, "state": e.state,
+                 "event_type": e.event_type, "detail": e.safe_payload_json}
                 for e in s.query(WorkflowEvent).filter_by(run_id=run_id).order_by(WorkflowEvent.sequence_number).all()
             ],
             "critic": [r.finding_json for r in s.query(CriticFinding).filter_by(run_id=run_id).all()],

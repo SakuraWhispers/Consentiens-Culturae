@@ -50,6 +50,7 @@ def complete_json(
     max_tokens: int | None = None,
     reasoning: dict[str, Any] | None = None,
     top_level_list_key: str | None = None,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     """POST one chat-completion request; return the parsed JSON object.
 
@@ -72,7 +73,7 @@ def complete_json(
     url = f"{base_url.rstrip('/')}/chat/completions"
     request_body: dict[str, Any] = {
         "model": model,
-        "temperature": 0,
+        "temperature": temperature,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system},
