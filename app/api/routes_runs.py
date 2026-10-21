@@ -6,6 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import (
+    InterfaceError,
+    InvalidatePoolError,
+    OperationalError,
+)
 
 from app.config import Settings
 from app.integrations.qloo_adapter import EvidenceSource
@@ -15,6 +20,14 @@ from app.services.rate_limiter import RateLimitExceeded, get_run_limiter
 from app.workflow.coordinator import run_decision
 
 router = APIRouter()
+
+# The database was unreachable (DNS/network blip). The message says what
+# happened and what the user should do, and never leaks the connection
+# string or any credential.
+DB_UNAVAILABLE_DETAIL = (
+    "The screening run could not be saved because the database was unreachable. "
+    "Nothing was stored, so this result was lost. Please run it again."
+)
 
 
 class RunDeps:
@@ -75,6 +88,11 @@ def post_run(brief: DecisionBrief, deps: RunDeps = Depends(get_deps)) -> dict[st
             if "LLM_ENABLED" in str(exc):
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+            # The database was unreachable (2026-10-21: a DNS blip killed a
+            # live run at its last write). Say so plainly — a bare 500 gave
+            # the user nothing to act on.
+            raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
 
@@ -85,6 +103,8 @@ def get_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
         return get_run_bundle(deps.engine, run_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="unknown run_id") from None
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+        raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
 
 
 __all__ = ["router", "get_deps", "RunDeps"]

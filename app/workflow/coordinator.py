@@ -736,8 +736,8 @@ def run_decision(
             {"status": s.status, "rank": s.rank, "weighted_total": s.weighted_total, "coverage": s.coverage},
             scoring_version,
         )
-    for finding in findings:
-        add_critic_finding(engine, run_id, finding)
+    for ordinal, finding in enumerate(findings):
+        add_critic_finding(engine, run_id, finding, ordinal=ordinal)
     set_revision_count(engine, run_id, revision_count)
     update_run_state(engine, run_id, terminal.value, final_report_json=report)
     bundle = get_run_bundle(engine, run_id)

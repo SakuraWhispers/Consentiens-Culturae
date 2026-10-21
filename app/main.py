@@ -60,6 +60,10 @@ def create_app(
         allow_origins=cors_origins,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
+        # Retry-After is not a CORS-safelisted response header: without this
+        # the browser hides it and the UI cannot tell the user how long to
+        # wait before retrying a rate-limited run.
+        expose_headers=["Retry-After"],
     )
 
     app.dependency_overrides[get_deps] = lambda: RunDeps(

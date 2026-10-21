@@ -117,6 +117,48 @@ def test_post_run_rejects_two_concepts(tmp_path: Path) -> None:
     assert resp.status_code == 422
 
 
+def test_post_run_returns_503_when_the_database_is_unreachable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Live failure (2026-10-21): a DNS blip made the last write fail with
+    InvalidatePoolError and the user got a bare 500 with no idea what to do.
+    The API must now say what happened (503) and never leak the DB URL."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.services import persistence
+
+    def _boom(engine):
+        raise OperationalError(
+            "connect", {}, Exception("failed to resolve host 'db.internal'")
+        )
+
+    monkeypatch.setattr(persistence, "_session", _boom)
+    monkeypatch.setattr(persistence, "DB_RETRY_BACKOFF_SECONDS", (0.0, 0.0))
+    resp = _client(tmp_path).post("/api/decision-runs", json=_brief_dict())
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "database was unreachable" in detail
+    assert "db.internal" not in detail
+    assert "postgresql" not in detail
+
+
+def test_get_run_bundle_returns_503_when_the_database_is_unreachable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from sqlalchemy.exc import InvalidatePoolError
+
+    from app.services import persistence
+
+    def _boom(engine):
+        raise InvalidatePoolError("pool could not connect")
+
+    monkeypatch.setattr(persistence, "_session", _boom)
+    monkeypatch.setattr(persistence, "DB_RETRY_BACKOFF_SECONDS", (0.0, 0.0))
+    resp = _client(tmp_path).get("/api/decision-runs/some-run-id")
+    assert resp.status_code == 503
+    assert "database was unreachable" in resp.json()["detail"]
+
+
 def test_get_run_bundle_and_unknown_id(tmp_path: Path) -> None:
     client = _client(tmp_path)
     run_id = client.post("/api/decision-runs", json=_brief_dict()).json()["run_id"]

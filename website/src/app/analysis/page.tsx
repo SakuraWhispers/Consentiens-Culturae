@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogoBanner } from "@/components/LogoBanner";
-import { BriefPayload, HardConstraint, postRun } from "@/lib/api";
+import { ApiError, BriefPayload, HardConstraint, postRun } from "@/lib/api";
 import { CRITERIA } from "@/lib/criteria";
 import { squeezeWeights, Weights } from "@/lib/weights";
 
@@ -196,6 +196,19 @@ export default function AnalysisPage() {
   const [constraints, setConstraints] = useState<HardConstraint[]>([]);
   const [phase, setPhase] = useState<"setup" | "running" | "error">("setup");
   const [error, setError] = useState<string | null>(null);
+  const [retryable, setRetryable] = useState(false);
+  // When the API says how long to wait (429), the Retry button stays locked
+  // until then, so the user is not bounced straight back into a 429.
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (retryAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, [retryAt]);
+
+  const waitSeconds = retryAt === null ? 0 : Math.max(0, Math.ceil((retryAt - now) / 1000));
 
   const preparedCount = concepts.filter(
     (c) => c.name.trim() !== "" && c.description.trim() !== ""
@@ -242,6 +255,17 @@ export default function AnalysisPage() {
     } catch (e) {
       setPhase("error");
       setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError) {
+        setRetryable(e.retryable);
+        setRetryAt(
+          e.retryAfterSeconds ? Date.now() + e.retryAfterSeconds * 1000 : null
+        );
+        setNow(Date.now());
+      } else {
+        // A network failure (the API unreachable) is worth retrying too.
+        setRetryable(true);
+        setRetryAt(null);
+      }
     }
   }
 
@@ -398,9 +422,25 @@ export default function AnalysisPage() {
           </button>
 
           {phase === "error" && (
-            <p className="mt-3 rounded-md border border-[#b5563a]/40 bg-[#b5563a]/10 px-3 py-2 font-serif text-base text-ink">
-              {error}
-            </p>
+            <div className="mt-3 rounded-md border border-[#b5563a]/40 bg-[#b5563a]/10 px-3 py-3 font-serif text-base text-ink">
+              <p>{error}</p>
+              {retryable && (
+                <div className="mt-3 flex items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={run}
+                    disabled={waitSeconds > 0}
+                    className="rounded-md bg-royal px-4 py-1.5 font-serif text-lg text-white transition
+                               enabled:hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {waitSeconds > 0 ? `Retry in ${waitSeconds}s` : "Retry analysis"}
+                  </button>
+                  <span className="font-serif text-sm text-mistslate">
+                    Your brief is kept — retrying runs the same screening again.
+                  </span>
+                </div>
+              )}
+            </div>
           )}
 
           <p className="mt-5 font-serif text-base leading-relaxed text-mistslate">
