@@ -1,4 +1,12 @@
-"""Researcher: LLM proposes a retrieval plan; code enforces allowlist + budget."""
+"""Researcher: LLM proposes a retrieval plan; code enforces allowlist + budget.
+
+The rules live in ONE place (`validate_call`) and are applied per call, so a
+single malformed call no longer discards the whole plan: `salvage_calls`
+keeps the calls that satisfy the rules and reports the ones that do not.
+The live failure this fixes (2026-10-20, run c2b65018…): the model wrote a
+param named "filter", the whole plan was rejected, and the deterministic
+planner took over.
+"""
 
 from __future__ import annotations
 
@@ -11,42 +19,79 @@ class PlanRejectedError(ValueError):
     """Raised when the coordinator must reject a researcher plan."""
 
 
+def validate_call(endpoint: str, params: dict[str, str]) -> list[str]:
+    """Rule violations for ONE planned call (empty list = acceptable).
+
+    The rules are the same ones the pipeline has always enforced: allowlisted
+    endpoint, allowlisted param keys, no empty values, and (for insights) a
+    present, docs-verified filter.type. Returning every violation instead of
+    raising on the first one lets the caller drop just this call and keep
+    the rest of the plan.
+    """
+    errors: list[str] = []
+    if endpoint not in ALLOWLISTED_ENDPOINTS:
+        errors.append(f"endpoint {endpoint!r} is not on the allowlist")
+        return errors
+    allowed = ALLOWED_PARAMS[endpoint]
+    for key, value in params.items():
+        if key not in allowed:
+            errors.append(f"param {key!r} not allowed for {endpoint}")
+            continue
+        if isinstance(value, str) and not value.strip():
+            errors.append(
+                f"empty value for param {key!r} on {endpoint} "
+                "(Qloo silently ignores bad params — rejected to protect evidence)"
+            )
+    if endpoint == "insights":
+        if "filter.type" not in params:
+            errors.append(
+                "insights call missing required 'filter.type' param "
+                "(Qloo docs: required; invalid params are silently ignored)"
+            )
+        elif params.get("filter.type") not in (None, "urn:entity:place"):
+            # Only the docs-verified type (docs/qloo-api-notes.md) produces the
+            # place-level evidence this pipeline scores; anything else seeds a
+            # 200-plus-dead-evidence insights call instead of a loud failure.
+            errors.append(
+                f"insights filter.type {params.get('filter.type')!r} is not "
+                "the docs-verified 'urn:entity:place' for this pipeline"
+            )
+    return errors
+
+
+def salvage_calls(
+    calls: list[dict[str, Any]], max_calls: int = 10
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Per-call validation: keep the calls that pass, report the ones that do not.
+
+    Returns (kept_calls, rejected_notes). No call is ever silently dropped:
+    every rejection is reported so the coordinator can name it as a run
+    limitation.
+    """
+    kept: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    for index, call in enumerate(calls):
+        endpoint = str(call.get("endpoint", ""))
+        params = call.get("params") or {}
+        errors = validate_call(endpoint, params)
+        if errors:
+            rejected.append(f"call {index + 1} ({endpoint or 'no endpoint'}) rejected: {errors[0]}")
+            continue
+        kept.append({"endpoint": endpoint, "params": dict(params)})
+    if len(kept) > max_calls:
+        rejected.append(f"plan truncated to call budget: {len(kept)} > {max_calls}")
+        kept = kept[:max_calls]
+    return kept, rejected
+
+
 def validate_plan(plan: RetrievalPlan, max_calls: int = 10) -> RetrievalPlan:
     """Code-side enforcement. Rejects anything off-allowlist or over budget."""
     if len(plan.calls) > max_calls:
         raise PlanRejectedError(f"plan exceeds call budget: {len(plan.calls)} > {max_calls}")
     for call in plan.calls:
-        if call.endpoint not in ALLOWLISTED_ENDPOINTS:
-            raise PlanRejectedError(f"endpoint {call.endpoint!r} is not on the allowlist")
-        allowed = ALLOWED_PARAMS[call.endpoint]
-        for key in call.params:
-            if key not in allowed:
-                raise PlanRejectedError(f"param {key!r} not allowed for {call.endpoint}")
-            value = call.params[key]
-            if isinstance(value, str) and not value.strip():
-                raise PlanRejectedError(
-                    f"empty value for param {key!r} on {call.endpoint} "
-                    "(Qloo silently ignores bad params — rejected to protect evidence)"
-                )
-        if (
-            call.endpoint == "insights"
-            and "filter.type" not in call.params
-        ):
-            raise PlanRejectedError(
-                "insights call missing required 'filter.type' param "
-                "(Qloo docs: required; invalid params are silently ignored)"
-            )
-        if call.endpoint == "insights" and call.params.get("filter.type") not in (
-            None,
-            "urn:entity:place",
-        ):
-            # Only the docs-verified type (docs/qloo-api-notes.md) produces the
-            # place-level evidence this pipeline scores; anything else seeds a
-            # 200-plus-dead-evidence insights call instead of a loud failure.
-            raise PlanRejectedError(
-                f"insights filter.type {call.params.get('filter.type')!r} is not "
-                "the docs-verified 'urn:entity:place' for this pipeline"
-            )
+        errors = validate_call(call.endpoint, call.params)
+        if errors:
+            raise PlanRejectedError(errors[0])
     return plan
 
 
@@ -60,4 +105,10 @@ def researcher_fallback(concept_names: list[str], tag_urn: str | None) -> Retrie
     return validate_plan(RetrievalPlan(calls=calls))
 
 
-__all__ = ["PlanRejectedError", "validate_plan", "researcher_fallback"]
+__all__ = [
+    "PlanRejectedError",
+    "validate_call",
+    "salvage_calls",
+    "validate_plan",
+    "researcher_fallback",
+]

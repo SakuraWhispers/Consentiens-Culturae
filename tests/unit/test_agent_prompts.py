@@ -1,0 +1,74 @@
+"""Prompt-contract tests: the prompts must STATE the allowed enum values.
+
+Live finding (2026-10-20, run c2b65018…): the critic prompt never listed the
+allowed severity values, so the model wrote "medium" and the whole critique
+was rejected (4 validation errors, deterministic fallback used). The
+researcher prompt never said there is no param named "filter" and never
+showed the insights call shape, so the plan was rejected and the deterministic
+planner took over.
+
+These tests are the regression guard for the prompt specification. They fail
+if a future prompt edit drops an enum list again.
+"""
+
+from __future__ import annotations
+
+from app.agents.prompts import (
+    ANALYST_SYSTEM,
+    CRITIC_SYSTEM,
+    RESEARCHER_SYSTEM,
+    REVISION_SYSTEM,
+)
+
+
+def test_critic_prompt_lists_allowed_severity_values() -> None:
+    for value in ("major", "minor", "info"):
+        assert value in CRITIC_SYSTEM
+    # The forbidden value is named explicitly so the model cannot reach for it.
+    assert "medium" in CRITIC_SYSTEM
+
+
+def test_critic_prompt_allows_an_empty_findings_list() -> None:
+    assert '"findings": []' in CRITIC_SYSTEM
+
+
+def test_critic_prompt_lists_allowed_suggested_actions() -> None:
+    for value in ("remove", "qualify", "revise_wording"):
+        assert value in CRITIC_SYSTEM
+
+
+def test_researcher_prompt_states_the_allowed_param_names() -> None:
+    assert "filter.type" in RESEARCHER_SYSTEM
+    assert "filter.tags" in RESEARCHER_SYSTEM
+    assert "signal.interests.tags" in RESEARCHER_SYSTEM
+
+
+def test_researcher_prompt_forbids_the_bare_filter_param() -> None:
+    # The live failure was a param literally named "filter".
+    assert '"filter"' in RESEARCHER_SYSTEM
+    assert "filter.type" in RESEARCHER_SYSTEM
+
+
+def test_researcher_prompt_states_the_verified_filter_type_value() -> None:
+    assert "urn:entity:place" in RESEARCHER_SYSTEM
+
+
+def test_researcher_prompt_shows_the_call_shape() -> None:
+    assert '"endpoint"' in RESEARCHER_SYSTEM
+    assert '"params"' in RESEARCHER_SYSTEM
+
+
+def test_revision_prompt_lists_the_claim_enum_values() -> None:
+    # The revision path goes live for the first time once the critic works.
+    for value in ("observation", "interpretation", "recommendation"):
+        assert value in REVISION_SYSTEM
+    for value in ("strong", "moderate", "weak"):
+        assert value in REVISION_SYSTEM
+    for value in ("high", "medium", "low"):
+        assert value in REVISION_SYSTEM
+
+
+def test_analyst_prompt_keeps_its_existing_enum_contract() -> None:
+    for value in ("strong", "moderate", "weak", "high", "medium", "low"):
+        assert value in ANALYST_SYSTEM
+    assert "evidence_ids MUST be an empty array []" in ANALYST_SYSTEM

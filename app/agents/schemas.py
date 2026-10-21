@@ -6,7 +6,8 @@ then replaced by the deterministic fallback with a recorded limitation.
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,11 @@ class PlannedCall(BaseModel):
 
 class RetrievalPlan(BaseModel):
     calls: list[PlannedCall] = Field(min_length=1, max_length=10)
+    # Resilience (2026-10-20): calls that did not pass the rules are reported,
+    # not swallowed; raw_head keeps a truncated copy of the model payload for
+    # diagnosis (it never contains keys or Qloo payloads).
+    rejected: list[str] = Field(default_factory=list)
+    raw_head: str = ""
 
 
 class RichClaim(BaseModel):
@@ -61,6 +67,8 @@ class RichClaim(BaseModel):
 
 class AnalysisDraft(BaseModel):
     claims: list[RichClaim] = Field(min_length=1)
+    rejected: list[str] = Field(default_factory=list)
+    raw_head: str = ""
 
 
 class CriticFindingModel(BaseModel):
@@ -86,6 +94,24 @@ class CriticFindingModel(BaseModel):
 
 class CriticOutput(BaseModel):
     findings: list[CriticFindingModel] = Field(default_factory=list)
+    rejected: list[str] = Field(default_factory=list)
+    raw_head: str = ""
+
+
+@dataclass
+class AgentOutput:
+    """Hook result carrier for the coordinator.
+
+    `items` are the entries code accepted; `rejected` names every entry that
+    was dropped (one line each, safe to show in a report limitation); and
+    `raw_head` is a truncated copy of the model payload, persisted as a
+    workflow event so a live failure can be diagnosed from the database
+    instead of guessed at.
+    """
+
+    items: list[Any] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
+    raw_head: str = ""
 
 
 __all__ = [
@@ -96,4 +122,5 @@ __all__ = [
     "RichClaim",
     "AnalysisDraft",
     "CriticOutput",
+    "AgentOutput",
 ]
