@@ -30,6 +30,8 @@ from app.services.persistence import (
     add_workflow_event,
     create_run,
     get_run_bundle,
+    get_run_state,
+    load_evidence_records,
     set_revision_count,
     update_run_state,
 )
@@ -43,10 +45,17 @@ MAX_LIVE_CALLS_PER_RUN = 10
 MAX_EVIDENCE_IDS_PER_CONCEPT = 12
 
 
-def _move(engine: Engine, run_id: str, seq: int, current: RunState, target: RunState) -> tuple[RunState, int]:
+def _move(
+    engine: Engine,
+    run_id: str,
+    seq: int,
+    current: RunState,
+    target: RunState,
+    detail: dict[str, Any] | None = None,
+) -> tuple[RunState, int]:
     nxt = transition(current, target)
     seq += 1
-    add_workflow_event(engine, run_id, seq, nxt.value, f"enter_{nxt.value.lower()}", {})
+    add_workflow_event(engine, run_id, seq, nxt.value, f"enter_{nxt.value.lower()}", detail or {})
     update_run_state(engine, run_id, nxt.value)
     return nxt, seq
 
@@ -304,6 +313,8 @@ def run_decision(
     analyst_fn=None,
     critic_fn=None,
     revise_fn=None,
+    run_id: str | None = None,
+    restore_evidence: bool = False,
 ) -> dict[str, Any]:
     """Injectable agent hooks (G3): each defaults to the deterministic path.
 
@@ -319,21 +330,37 @@ def run_decision(
     Invalid individual items are dropped and reported as limitations; the
     deterministic fallback takes over only when an entire stage produced
     nothing usable.
+
+    Resume (2026-10-22): pass an existing `run_id` to continue a half-finished
+    run in place, and `restore_evidence=True` to reuse the Qloo evidence it
+    already stored (no Qloo call is repeated, so a retry costs no Qloo quota).
     """
-    run_id = create_run(
-        engine,
-        input_json=brief.model_dump(),
-        scoring_version=scoring_version,
-        workflow_version=workflow_version,
-    )
-    seq = 0
-    state = RunState.CREATED
     limitations: list[str] = []
     live_calls = 0
+    restored_records: dict[str, list[EvidenceRecord]] | None = None
 
-    def move(target: RunState) -> None:
+    if run_id is None:
+        run_id = create_run(
+            engine,
+            input_json=brief.model_dump(),
+            scoring_version=scoring_version,
+            workflow_version=workflow_version,
+        )
+        seq = 0
+        state = RunState.CREATED
+    else:
+        state_value, last_seq = get_run_state(engine, run_id)
+        state = RunState(state_value)
+        seq = last_seq
+        if restore_evidence:
+            restored_records = {
+                cid: [EvidenceRecord(**rec) for rec in recs]
+                for cid, recs in load_evidence_records(engine, run_id).items()
+            }
+
+    def move(target: RunState, detail: dict[str, Any] | None = None) -> None:
         nonlocal state, seq
-        state, seq = _move(engine, run_id, seq, state, target)
+        state, seq = _move(engine, run_id, seq, state, target, detail)
 
     def note(event_type: str, payload: dict[str, Any]) -> None:
         """Record a non-state event (e.g. a rejected agent output) for audit."""
@@ -341,20 +368,40 @@ def run_decision(
         seq += 1
         add_workflow_event(engine, run_id, seq, state.value, event_type, payload)
 
-    move(RunState.VALIDATING_INPUT)
+    if state is RunState.CREATED:
+        move(RunState.VALIDATING_INPUT)
+    elif state is not RunState.FAILED_RETRYABLE:
+        # A resume is a retryable failure in the state table's own words.
+        # FAILED_RETRYABLE may only continue into RETRIEVING_EVIDENCE, which
+        # is exactly where a resumed run re-enters the pipeline.
+        move(
+            RunState.FAILED_RETRYABLE,
+            {"resumed": True, "restored_evidence": bool(restored_records)},
+        )
     move(RunState.RETRIEVING_EVIDENCE)
 
     records_by_concept: dict[str, list[EvidenceRecord]] = {c.concept_id: [] for c in brief.concepts}
     fixture_flags: list[bool] = []
     concept_names = {c.concept_id: c.name for c in brief.concepts}
     concept_ids = [c.concept_id for c in brief.concepts]
-    if researcher_fn is not None:
+    calls: list[tuple[str | None, str, dict[str, str]]] = []
+    if restored_records is not None:
+        # RESUME: the previous attempt already paid for the Qloo calls.
+        records_by_concept = {
+            cid: list(recs) for cid, recs in restored_records.items()
+        }
+        for cid in records_by_concept:
+            records_by_concept.setdefault(cid, [])
+        limitations.append(
+            f"resumed run: reused {sum(len(r) for r in records_by_concept.values())} "
+            "stored evidence records (no Qloo call repeated)"
+        )
+    elif researcher_fn is not None:
         # The researcher gets the same two chances as the other agents, and
         # the second one is INFORMED: the rejection reason is handed back so
         # the model can fix the plan instead of repeating it.
         plan_hint: str | None = None
         last_plan_error: Exception | None = None
-        calls: list[tuple[str | None, str, dict[str, str]]] = []
         for _attempt in range(2):
             try:
                 proposed = _call_hook(
@@ -454,6 +501,20 @@ def run_decision(
                 rec.qloo_entity_id,
             )
 
+    # Incremental persistence (2026-10-22): the evidence is stored as soon as
+    # it exists, so a failure later in the pipeline (or a dead process) leaves
+    # a resumable run instead of nothing.
+    for concept_id, recs in records_by_concept.items():
+        if recs:
+            add_evidence_records(
+                engine,
+                run_id,
+                [
+                    {**r.model_dump(exclude={"retrieved_at"}), "concept_id": concept_id}
+                    for r in recs
+                ],
+            )
+
     move(RunState.NORMALIZING_EVIDENCE)
     raw_values, diagnostics = extract_raw_values(records_by_concept)
     if all(v is None for per_concept in raw_values.values() for v in per_concept.values()):
@@ -486,6 +547,17 @@ def run_decision(
     for recs in records_by_concept.values():
         for rec in recs:
             limitations.extend(f"evidence: {lim}" for lim in rec.limitations if "ENTITY_MATCH_AMBIGUOUS" in lim)
+
+    # The score snapshot is stored now, so a later failure leaves the ranks
+    # readable even without the final report.
+    for s in scores:
+        add_score_snapshot(
+            engine,
+            run_id,
+            s.concept_id,
+            {"status": s.status, "rank": s.rank, "weighted_total": s.weighted_total, "coverage": s.coverage},
+            scoring_version,
+        )
 
     move(RunState.DRAFTING_EXPLANATION)
     by_id = {s.concept_id: s for s in scores}
@@ -780,17 +852,8 @@ def run_decision(
     move(terminal)
     report["state"] = terminal.value
 
-    for recs in records_by_concept.values():
-        if recs:
-            add_evidence_records(engine, run_id, [r.model_dump(exclude={"retrieved_at"}) for r in recs])
-    for s in scores:
-        add_score_snapshot(
-            engine,
-            run_id,
-            s.concept_id,
-            {"status": s.status, "rank": s.rank, "weighted_total": s.weighted_total, "coverage": s.coverage},
-            scoring_version,
-        )
+    # The critic findings are stored with the rest of the run (the evidence
+    # and the scores were already written when their stage completed).
     for ordinal, finding in enumerate(findings):
         add_critic_finding(engine, run_id, finding, ordinal=ordinal)
     set_revision_count(engine, run_id, revision_count)

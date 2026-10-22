@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,9 +16,16 @@ from sqlalchemy.exc import (
 from app.config import Settings
 from app.integrations.qloo_adapter import EvidenceSource
 from app.schemas.brief import DecisionBrief
-from app.services.persistence import get_run_bundle
+from app.services.persistence import (
+    create_run,
+    delete_run,
+    get_run_bundle,
+    get_run_input,
+    get_run_state,
+)
 from app.services.rate_limiter import RateLimitExceeded, get_run_limiter
 from app.workflow.coordinator import run_decision
+from app.workflow.states import TERMINAL_STATES, RunState
 
 router = APIRouter()
 
@@ -28,6 +36,17 @@ DB_UNAVAILABLE_DETAIL = (
     "The screening run could not be saved because the database was unreachable. "
     "Nothing was stored, so this result was lost. Please run it again."
 )
+
+
+class RunRequest(DecisionBrief):
+    """The brief plus an optional client-chosen run id.
+
+    The client may generate the id so it can watch the run's progress (and
+    find it again) before the pipeline returns. The server validates the
+    format and refuses an id that already exists.
+    """
+
+    run_id: str | None = None
 
 
 class RunDeps:
@@ -43,13 +62,37 @@ def get_deps() -> RunDeps:  # replaced per app instance via dependency_overrides
     raise RuntimeError("app dependencies not configured")
 
 
+def _validated_run_id(candidate: str | None) -> str:
+    """Accept a client-supplied run id only in the exact shape we generate."""
+    if candidate is None:
+        return uuid.uuid4().hex
+    if len(candidate) != 32 or any(c not in "0123456789abcdef" for c in candidate):
+        raise HTTPException(
+            status_code=422, detail="run_id must be 32 lowercase hex characters"
+        )
+    return candidate
+
+
+def _llm_hooks(brief: DecisionBrief) -> dict[str, Any]:
+    """Build the G3 hooks when the LLM is enabled; fail loudly if misconfigured."""
+    settings = Settings.from_env()
+    if not settings.llm_enabled:
+        return {}
+    from app.services.llm_hooks import build_hooks
+
+    return build_hooks(
+        settings,
+        [(c.concept_id, c.name) for c in brief.concepts],
+    )
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.post("/decision-runs")
-def post_run(brief: DecisionBrief, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
+def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
     # Run limiter (free-model budget protection): one at a time, min gap,
     # daily cap. 429 carries Retry-After; the UI surfaces it verbatim.
     limiter = get_run_limiter()
@@ -62,25 +105,32 @@ def post_run(brief: DecisionBrief, deps: RunDeps = Depends(get_deps)) -> dict[st
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     try:
-        # G3 LLM hooks follow the two-pool Settings (LLM_ENABLED gate). When
-        # enabled-but-misconfigured, fail the request loudly: a silent template
-        # fallback would quietly misrepresent the run's evidence quality.
-        llm_hooks = None
-        settings = Settings.from_env()
-        if settings.llm_enabled:
-            from app.services.llm_hooks import build_hooks
-
-            llm_hooks = build_hooks(
-                settings,
-                [(c.concept_id, c.name) for c in brief.concepts],
-            )
+        brief = DecisionBrief(**request.model_dump(exclude={"run_id"}))
+        run_id = _validated_run_id(request.run_id)
         try:
+            llm_hooks = _llm_hooks(brief)
+        except ValueError as exc:
+            if "LLM_ENABLED" in str(exc):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise
+        try:
+            # The run row exists BEFORE the pipeline starts, so the client
+            # (which may know the id already) can follow its progress and
+            # find it again if the request dies.
+            create_run(
+                deps.engine,
+                input_json=brief.model_dump(),
+                scoring_version=deps.scoring_version,
+                workflow_version="w0.1-g2",
+                run_id=run_id,
+            )
             return run_decision(
                 deps.engine,
                 brief,
                 deps.source,
                 scoring_version=deps.scoring_version,
-                **(llm_hooks or {}),
+                run_id=run_id,
+                **llm_hooks,
             )
         except ValueError as exc:
             # Distinguish hook misconfiguration from brief-contract rejects so
@@ -97,6 +147,78 @@ def post_run(brief: DecisionBrief, deps: RunDeps = Depends(get_deps)) -> dict[st
         limiter.release()
 
 
+@router.post("/decision-runs/{run_id}/resume")
+def resume_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
+    """Continue a half-finished run in place, reusing its stored evidence.
+
+    The Qloo calls are NOT repeated (the evidence is already stored), so a
+    resume costs no Qloo quota; the analysis stages run again.
+    """
+    limiter = get_run_limiter()
+    try:
+        limiter.acquire()
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    try:
+        try:
+            state_value, _ = get_run_state(deps.engine, run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="unknown run_id") from exc
+        if state_value in {s.value for s in TERMINAL_STATES}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"run already finished ({state_value}); nothing to resume",
+            )
+        try:
+            brief = DecisionBrief(**get_run_input(deps.engine, run_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            llm_hooks = _llm_hooks(brief)
+        except ValueError as exc:
+            if "LLM_ENABLED" in str(exc):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise
+        try:
+            return run_decision(
+                deps.engine,
+                brief,
+                deps.source,
+                scoring_version=deps.scoring_version,
+                run_id=run_id,
+                restore_evidence=True,
+                **llm_hooks,
+            )
+        except ValueError as exc:
+            if "LLM_ENABLED" in str(exc):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+            raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
+    finally:
+        limiter.release()
+
+
+@router.delete("/decision-runs/{run_id}")
+def delete_run_endpoint(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
+    """Delete a run and its rows — the 'start fresh' cleanup.
+
+    Only the rows of THIS run are deleted. A completed run can be deleted too
+    (the user asked for it explicitly).
+    """
+    try:
+        deleted = delete_run(deps.engine, run_id)
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+        raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="unknown run_id")
+    return {"run_id": run_id, "deleted": True}
+
+
 @router.get("/decision-runs/{run_id}")
 def get_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
     try:
@@ -107,4 +229,4 @@ def get_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
 
 
-__all__ = ["router", "get_deps", "RunDeps"]
+__all__ = ["router", "get_deps", "RunDeps", "RunRequest"]

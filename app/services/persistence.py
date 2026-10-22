@@ -171,13 +171,16 @@ def create_run(
     input_json: dict[str, Any],
     scoring_version: str,
     workflow_version: str,
+    run_id: str | None = None,
 ) -> str:
     if not input_json:
         raise ValueError("input_json must not be empty")
     # The id is generated once, OUTSIDE the retried operation: a retry after
     # a lost acknowledgement re-inserts the same row (conflict = already
-    # there) instead of creating a second, orphaned run.
-    run_id = uuid.uuid4().hex
+    # there) instead of creating a second, orphaned run. A caller may supply
+    # the id (the API lets the client know the run id before the run starts).
+    if run_id is None:
+        run_id = uuid.uuid4().hex
 
     def _op() -> None:
         with _session(engine) as s:
@@ -378,6 +381,91 @@ def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
     return _with_db_retry(_op)
 
 
+def load_evidence_records(
+    engine: Engine, run_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    """The stored evidence of a run, grouped by concept id.
+
+    Used by the RESUME path: a half-finished run keeps its Qloo evidence, so
+    a retry can re-run the LLM stages without spending Qloo quota again.
+    """
+    from app.schemas.evidence import EvidenceRecord
+
+    with _session(engine) as s:
+        rows = s.query(EvidenceRow).filter_by(run_id=run_id).all()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        record = dict(row.evidence_json or {})
+        record["evidence_id"] = row.evidence_id
+        record["fixture_mode"] = bool(row.fixture_mode)
+        # Which concept the record belongs to is carried in the payload
+        # (the table has no concept column; the id hash is not reversible).
+        concept_id = record.pop("concept_id", None)
+        if not concept_id:
+            continue
+        try:
+            model = EvidenceRecord(**record)
+        except Exception:
+            continue
+        grouped.setdefault(concept_id, []).append(model.model_dump())
+    return grouped
+
+
+def delete_run(engine: Engine, run_id: str) -> bool:
+    """Delete a run and all of its rows (the 'start fresh' cleanup).
+
+    Only the rows of THIS run are touched. Returns False when the run does
+    not exist.
+    """
+
+    def _op() -> bool:
+        with _session(engine) as s:
+            run = s.get(DecisionRun, run_id)
+            if run is None:
+                return False
+            s.query(EvidenceRow).filter_by(run_id=run_id).delete()
+            s.query(ScoreSnapshot).filter_by(run_id=run_id).delete()
+            s.query(CriticFinding).filter_by(run_id=run_id).delete()
+            s.query(WorkflowEvent).filter_by(run_id=run_id).delete()
+            s.delete(run)
+            s.commit()
+            return True
+
+    return _with_db_retry(_op)
+
+
+def get_run_state(engine: Engine, run_id: str) -> tuple[str, int]:
+    """The run's state and its last event sequence number (for a resume)."""
+
+    def _op() -> tuple[str, int]:
+        with _session(engine) as s:
+            run = s.get(DecisionRun, run_id)
+            if run is None:
+                raise ValueError(f"unknown run_id {run_id}")
+            last = (
+                s.query(WorkflowEvent)
+                .filter_by(run_id=run_id)
+                .order_by(WorkflowEvent.sequence_number.desc())
+                .first()
+            )
+            return run.state, (last.sequence_number if last else 0)
+
+    return _with_db_retry(_op)
+
+
+def get_run_input(engine: Engine, run_id: str) -> dict[str, Any]:
+    """The brief a run was started with (used by the resume endpoint)."""
+
+    def _op() -> dict[str, Any]:
+        with _session(engine) as s:
+            run = s.get(DecisionRun, run_id)
+            if run is None:
+                raise ValueError(f"unknown run_id {run_id}")
+            return dict(run.input_json or {})
+
+    return _with_db_retry(_op)
+
+
 __all__ = [
     "Base",
     "get_engine",
@@ -389,6 +477,10 @@ __all__ = [
     "add_evidence_records",
     "add_score_snapshot",
     "add_critic_finding",
+    "load_evidence_records",
+    "delete_run",
+    "get_run_state",
+    "get_run_input",
     "get_run_bundle",
     "set_revision_count",
 ]

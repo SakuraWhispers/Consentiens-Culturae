@@ -15,14 +15,21 @@ class IllegalTransitionError(RuntimeError):
 
 _ALLOWED: Mapping[RunState, frozenset[RunState]] = {
     RunState.CREATED: frozenset({RunState.VALIDATING_INPUT}),
+    # FAILED_RETRYABLE is reachable from every non-terminal stage (2026-10-22):
+    # a run that was interrupted can be resumed, and the retryable failure is
+    # how the state table expresses "try again".
     RunState.VALIDATING_INPUT: frozenset(
-        {RunState.RETRIEVING_EVIDENCE, RunState.FAILED_TERMINAL}
+        {
+            RunState.RETRIEVING_EVIDENCE,
+            RunState.FAILED_RETRYABLE,
+            RunState.FAILED_TERMINAL,
+        }
     ),
     RunState.RETRIEVING_EVIDENCE: frozenset(
         {RunState.NORMALIZING_EVIDENCE, RunState.FAILED_RETRYABLE, RunState.FAILED_TERMINAL}
     ),
     RunState.NORMALIZING_EVIDENCE: frozenset(
-        {RunState.SCORING, RunState.FAILED_TERMINAL}
+        {RunState.SCORING, RunState.FAILED_RETRYABLE, RunState.FAILED_TERMINAL}
     ),
     RunState.SCORING: frozenset(
         {RunState.DRAFTING_EXPLANATION, RunState.FAILED_RETRYABLE}
