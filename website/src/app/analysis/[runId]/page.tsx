@@ -273,6 +273,9 @@ function RunPage() {
           <ul className="mt-2 grid gap-x-8 gap-y-1 text-base sm:grid-cols-2">
             {[
               ["result", "The ranked result"],
+              ...(report.tiebreak?.detected
+                ? [["tiebreak", "The tie-break attempt"]]
+                : []),
               ["researcher", "1 · What the researcher did and found"],
               ["analyst", "2 · What the analyst analysed and found"],
               ["critique", "3 · What the critique criticised"],
@@ -351,6 +354,73 @@ function RunPage() {
                 </div>
               ))}
             </div>
+          </section>
+        )}
+
+        {/* Tie-break: what the engine did when the leaders ended level. */}
+        {report.tiebreak?.detected && (
+          <section
+            id="tiebreak"
+            className="rounded-2xl border border-mauve/50 bg-mauve/10 p-7 shadow-sm"
+          >
+            <h3 className="font-serif text-3xl text-ink">
+              The tie-break attempt
+            </h3>
+            <p className="mt-2 font-serif text-lg text-ink/90">
+              {report.tiebreak.concepts.map((c) => conceptName(c)).join(" and ")}{" "}
+              ended level on the weighted total, so the engine looked harder before
+              presenting anything: {report.tiebreak.extra_calls} extra Qloo{" "}
+              {report.tiebreak.extra_calls === 1 ? "call" : "calls"} for the tied
+              concepts only ({report.tiebreak.new_entities} new evidence{" "}
+              {report.tiebreak.new_entities === 1 ? "record" : "records"},{" "}
+              {report.tiebreak.known_entities_skipped} already known and not
+              counted twice).
+            </p>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              {report.tiebreak.concepts.map((c) => (
+                <div key={c} className="rounded-lg border border-mauve/40 bg-white p-4">
+                  <dt className="font-serif text-lg text-ink">{conceptName(c)}</dt>
+                  <dd className="mt-1 font-serif text-xl text-royal">
+                    {report.tiebreak?.before[c]?.toFixed(1)} →{" "}
+                    {report.tiebreak?.after[c]?.toFixed(1)}
+                  </dd>
+                  <dd className="font-serif text-sm text-mistslate">
+                    weighted total before → after the extra evidence
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-4 rounded-lg bg-white px-4 py-3 font-serif text-base text-ink/90">
+              {report.tiebreak.resolved
+                ? "After the extra evidence, the totals separated and the tie was resolved."
+                : "Even with the extra evidence, the totals stayed level. The engine does not invent a difference it cannot measure."}
+            </p>
+            {report.tiebreak.comparison.length > 0 && (
+              <div className="mt-5">
+                <p className="font-sans text-sm font-medium uppercase tracking-wide text-ink/70">
+                  The focused comparison
+                </p>
+                <ul className="mt-2 space-y-3">
+                  {report.tiebreak.comparison.map((claim) => (
+                    <li
+                      key={claim.claim_id}
+                      className="rounded-lg border border-mistline bg-white p-4"
+                    >
+                      <p className="font-sans text-sm font-medium text-royal">
+                        {conceptName(claim.concept_id)} · {claim.claim_type} ·{" "}
+                        {claim.strength} ⇒ confidence {claim.confidence}
+                      </p>
+                      <p className="mt-1 font-serif text-base text-ink">
+                        {claim.text}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="mt-4 font-serif text-sm text-mistslate">
+              {report.tiebreak.note}
+            </p>
           </section>
         )}
 

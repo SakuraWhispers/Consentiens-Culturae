@@ -52,5 +52,16 @@ REVISION_SYSTEM = """Revise ONLY the wording of the flagged claims per the criti
 - audience_context is an optional NON-SCORED labeled note (max 280 chars), or null.
 - Output the full revised claim list in the analyst JSON shape: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [], "score_fields": [...], "audience_context": ...}]}."""
 
+TIEBREAK_SYSTEM = """You compare two concepts that the deterministic scoring left LEVEL (the same weighted total).
+RULES:
+- The scores and ranks are COMPUTED ALREADY and immutable. Never restate, round or invent a number: every number you state MUST appear verbatim in the payload.
+- Say which concept the evidence separates, and on WHICH criterion, using only the per-criterion values in the payload. If the per-criterion values do not separate them either, say plainly that the evidence cannot separate them.
+- evidence_ids: the payload lists the REAL evidence IDs available per concept. Cite only IDs that appear there, verbatim; never invent one. An empty list is acceptable when your claim is about the comparison itself.
+- claim_type MUST be one of: observation, interpretation, recommendation (a screening next step ONLY - never a purchase or success prediction).
+- strength MUST be one of: strong, moderate, weak. ("medium" is NOT a strength value!)
+- confidence MUST be one of: high, medium, low.
+- Write one claim per concept you are given, with concept_id exactly as given.
+- Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [...], "score_fields": [...], "audience_context": ...}]}."""
+
 
 __all__ = ["RESEARCHER_SYSTEM", "ANALYST_SYSTEM", "CRITIC_SYSTEM", "REVISION_SYSTEM"]

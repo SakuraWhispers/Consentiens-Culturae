@@ -25,6 +25,7 @@ from app.agents.analyst import (
     AnalysisDraft,
     CriticOutput,
     RetrievalPlan,
+    compare_tied_llm,
     draft_claims_llm,
     draft_plan_llm,
     review_claims_llm,
@@ -240,11 +241,37 @@ def build_hooks(
             raw_head=out.raw_head,
         )
 
+    def tiebreak_fn(
+        tied: list[dict[str, Any]],
+        evidence_summary: dict[str, Any],
+        weights: dict[str, float],
+        before: dict[str, float],
+        after: dict[str, float],
+        repair_hint: str | None = None,
+    ) -> AgentOutput:
+        """The focused comparison of the concepts the scoring left level."""
+
+        def once() -> AnalysisDraft:
+            return compare_tied_llm(
+                main_key, m["model"], tied, evidence_summary, weights, before, after,
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
+            )
+
+        out = paced(once)()
+        return AgentOutput(
+            items=[c.model_dump() for c in out.claims],
+            rejected=list(out.rejected),
+            raw_head=out.raw_head,
+        )
+
     return {
         "researcher_fn": researcher_fn,
         "analyst_fn": analyst_fn,
         "critic_fn": critic_fn,
         "revise_fn": revise_fn,
+        "tiebreak_fn": tiebreak_fn,
     }
 
 

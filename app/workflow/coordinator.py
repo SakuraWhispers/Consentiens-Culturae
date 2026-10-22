@@ -50,6 +50,51 @@ MAX_EVIDENCE_IDS_PER_CONCEPT = 20
 TIE_EPSILON_POINTS = 0.5
 
 
+def _tiebreak_retrieval(
+    source: EvidenceSource,
+    brief: DecisionBrief,
+    tied: list[str],
+    records_by_concept: dict[str, list[EvidenceRecord]],
+    calls_made: int,
+    max_calls: int,
+) -> tuple[dict[str, list[EvidenceRecord]], int, int, int]:
+    """Look harder at the tied concepts: one refined search each.
+
+    Returns (new_records_by_concept, extra_calls, new_entities,
+    known_entities_skipped). An entity that is already known for a concept is
+    NOT added again - the same entity is the same entity, and counting it
+    twice would quietly inflate that concept's score.
+    """
+    new_records: dict[str, list[EvidenceRecord]] = {cid: [] for cid in tied}
+    extra_calls = 0
+    new_entities = 0
+    skipped = 0
+    names = {c.concept_id: c.name for c in brief.concepts}
+    for cid in tied:
+        if calls_made + extra_calls >= max_calls:
+            break
+        query = f"{names.get(cid, cid)} {brief.market}".strip()
+        try:
+            payload = source.load("search", {"query": query})
+        except (FixtureError, QlooError):
+            continue
+        extra_calls += 1
+        known = {
+            r.qloo_entity_id
+            for r in records_by_concept.get(cid, [])
+            if r.qloo_entity_id
+        }
+        for rec in normalize_response(payload, intended_name=names.get(cid, cid)):
+            if rec.qloo_entity_id and rec.qloo_entity_id in known:
+                skipped += 1
+                continue
+            if rec.qloo_entity_id:
+                known.add(rec.qloo_entity_id)
+            new_records[cid].append(rec)
+            new_entities += 1
+    return new_records, extra_calls, new_entities, skipped
+
+
 def _detect_tie(scores: list[Any], epsilon: float = TIE_EPSILON_POINTS) -> dict[str, Any]:
     """Name the concepts that are level with the leader (2026-10-22).
 
@@ -350,6 +395,7 @@ def run_decision(
     analyst_fn=None,
     critic_fn=None,
     revise_fn=None,
+    tiebreak_fn=None,
     run_id: str | None = None,
     restore_evidence: bool = False,
 ) -> dict[str, Any]:
@@ -374,6 +420,7 @@ def run_decision(
     """
     limitations: list[str] = []
     live_calls = 0
+    calls_made = 0
     restored_records: dict[str, list[EvidenceRecord]] | None = None
 
     if run_id is None:
@@ -515,6 +562,7 @@ def run_decision(
     else:
         calls = _plan_calls(brief, source)
     for owner_id, endpoint, params in calls:
+        calls_made += 1
         if getattr(source, "is_live", False):
             live_calls += 1
             if live_calls > max_live_calls:
@@ -639,8 +687,166 @@ def run_decision(
         for rec in recs:
             limitations.extend(f"evidence: {lim}" for lim in rec.limitations if "ENTITY_MATCH_AMBIGUOUS" in lim)
 
-    # The score snapshot is stored now, so a later failure leaves the ranks
-    # readable even without the final report.
+    # TIE-BREAK (2026-10-22, Batch 2): when the deterministic scoring leaves
+    # the leaders level, look harder - more Qloo for the tied concepts, the
+    # totals recomputed, and a focused LLM comparison of the two.
+    known_ids = {r.evidence_id for recs in records_by_concept.values() for r in recs}
+    tie = _detect_tie(scores)
+    tiebreak_block: dict[str, Any] = {
+        "detected": False,
+        "concepts": [],
+        "extra_calls": 0,
+        "new_entities": 0,
+        "known_entities_skipped": 0,
+        "before": {},
+        "after": {},
+        "resolved": False,
+        "comparison": [],
+        "note": "",
+    }
+    tiebreak_claims: list[dict[str, Any]] = []
+    if tie["detected"]:
+        tied = [cid for cid in tie["concepts"] if cid in concept_ids]
+        before = {
+            cid: round(float(s.weighted_total), 4)
+            for cid, s in ((s.concept_id, s) for s in scores)
+            if cid in tied and s.weighted_total is not None
+        }
+        new_records, extra_calls, new_entities, skipped = _tiebreak_retrieval(
+            source, brief, tied, records_by_concept, calls_made, max_live_calls
+        )
+        calls_made += extra_calls
+        live_calls += extra_calls
+        for cid, recs in new_records.items():
+            for rec in recs:
+                rec.evidence_id = stable_evidence_id(
+                    f"{rec.endpoint_or_operation}#tiebreak#{run_id}#{cid}",
+                    rec.query_params_redacted,
+                    rec.qloo_entity_id,
+                )
+                records_by_concept.setdefault(cid, []).append(rec)
+            if recs:
+                add_evidence_records(
+                    engine,
+                    run_id,
+                    [
+                        {**r.model_dump(exclude={"retrieved_at"}), "concept_id": cid}
+                        for r in recs
+                    ],
+                )
+        # Recompute the scores with the extra evidence.
+        raw_values, diagnostics = extract_raw_values(records_by_concept)
+        scores = score_concepts(
+            concept_ids=concept_ids,
+            weights=brief.weights,
+            raw_values=raw_values,
+            hard_constraints=brief.constraints,
+            scoring_version=scoring_version,
+            concept_attributes={c.concept_id: dict(c.attributes) for c in brief.concepts},
+        )
+        after = {
+            cid: round(float(s.weighted_total), 4)
+            for cid, s in ((s.concept_id, s) for s in scores)
+            if cid in tied and s.weighted_total is not None
+        }
+        tie = _detect_tie(scores)
+        resolved = not tie["detected"]
+        note = (
+            f"{len(tied)} concepts were level on the total. The tie-break made "
+            f"{extra_calls} extra Qloo call(s) and added {new_entities} new "
+            f"evidence record(s) ({skipped} already known, not counted twice). "
+            f"After that, the totals are "
+            + ", ".join(f"{cid} {after.get(cid)}" for cid in tied)
+            + " — "
+            + (
+                "the evidence separates them."
+                if resolved
+                else "the evidence still cannot separate them."
+            )
+            + " Note: the tied concepts carry more evidence than the others, "
+            "so their totals are not based on identical data."
+        )
+        tiebreak_block = {
+            "detected": True,
+            "concepts": tied,
+            "extra_calls": extra_calls,
+            "new_entities": new_entities,
+            "known_entities_skipped": skipped,
+            "before": before,
+            "after": after,
+            "resolved": resolved,
+            "comparison": [],
+            "note": note,
+        }
+        if not resolved and tiebreak_fn is not None:
+            tied_payload = [
+                {
+                    "concept_id": cid,
+                    "name": next(
+                        (c.name for c in brief.concepts if c.concept_id == cid), cid
+                    ),
+                    "weighted_total": after.get(cid),
+                    "criterion_scores": [
+                        {"criterion": cs.criterion, "value": cs.value}
+                        for cs in next(
+                            (s for s in scores if s.concept_id == cid),
+                            None,
+                        ).criterion_scores
+                    ]
+                    if any(s.concept_id == cid for s in scores)
+                    else [],
+                }
+                for cid in tied
+            ]
+            try:
+                out = _call_hook(
+                    tiebreak_fn,
+                    (
+                        tied_payload,
+                        {
+                            cid: {
+                                "available": sum(
+                                    1
+                                    for r in records_by_concept.get(cid, [])
+                                    if r.coverage_status == "available"
+                                ),
+                                "total": len(records_by_concept.get(cid, [])),
+                                "evidence_ids": [
+                                    r.evidence_id
+                                    for r in records_by_concept.get(cid, [])
+                                    if r.coverage_status == "available"
+                                ][:MAX_EVIDENCE_IDS_PER_CONCEPT],
+                            }
+                            for cid in tied
+                        },
+                        brief.weights.as_dict(),
+                        before,
+                        after,
+                    ),
+                    None,
+                )
+                items, rejected, _raw = _unwrap_hook_output(out)
+                good, bad = _salvage_claims(
+                    [dict(c) for c in items], concept_ids, known_ids
+                )
+                tiebreak_claims = good
+                tiebreak_block["comparison"] = good
+                if bad or rejected:
+                    limitations.append(
+                        f"tie-break comparison: {len(bad) + len(rejected)} "
+                        "claim(s) rejected by validation"
+                    )
+            except Exception as exc:
+                limitations.append(
+                    "tie-break comparison failed "
+                    f"({type(exc).__name__}: {str(exc)[:180]})"
+                )
+                tiebreak_block["note"] += (
+                    " The focused comparison could not be produced."
+                )
+
+    # The score snapshot is stored now (after the tie-break), so a later
+    # failure leaves the ranks readable even without the final report.
     for s in scores:
         add_score_snapshot(
             engine,
@@ -652,7 +858,6 @@ def run_decision(
 
     move(RunState.DRAFTING_EXPLANATION)
     by_id = {s.concept_id: s for s in scores}
-    known_ids = {r.evidence_id for recs in records_by_concept.values() for r in recs}
     available_by_concept = {
         cid: sum(1 for r in recs if r.coverage_status == "available")
         for cid, recs in records_by_concept.items()
@@ -776,7 +981,11 @@ def run_decision(
         for _attempt in range(2):
             try:
                 out = _call_hook(
-                    critic_fn, (claims, score_summary, sorted(known_ids)), critic_hint
+                    critic_fn,
+                    # The tie-break claims are reviewed as well: the critique
+                    # must cover everything the run says.
+                    (claims + tiebreak_claims, score_summary, sorted(known_ids)),
+                    critic_hint,
                 )
                 candidate, agent_rejected, raw_head = _unwrap_hook_output(out)
                 good, bad = _salvage_findings(
@@ -884,7 +1093,6 @@ def run_decision(
     move(RunState.FINAL_VALIDATION)
     winner = next((s for s in scores if s.rank == 1), None)
     fixture_mode = bool(fixture_flags) and all(fixture_flags)
-    tie = _detect_tie(scores)
 
     report: dict[str, Any] = {
         "run_id": run_id,
@@ -933,6 +1141,7 @@ def run_decision(
         },
         "research": research_block,
         "tie": tie,
+        "tiebreak": tiebreak_block,
         "sensitivity": {"status": "pending"},
         "disclaimer": "Early screening aid. Not a demand forecast.",
     }

@@ -23,7 +23,13 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.agents.llm_client import DEFAULT_LLM_BASE_URL, complete_json
-from app.agents.prompts import ANALYST_SYSTEM, CRITIC_SYSTEM, RESEARCHER_SYSTEM, REVISION_SYSTEM
+from app.agents.prompts import (
+    ANALYST_SYSTEM,
+    CRITIC_SYSTEM,
+    RESEARCHER_SYSTEM,
+    REVISION_SYSTEM,
+    TIEBREAK_SYSTEM,
+)
 from app.agents.researcher import PlanRejectedError, salvage_calls
 from app.agents.schemas import (
     AnalysisDraft,
@@ -365,9 +371,51 @@ def revise_claims_llm(
     )
 
 
+def compare_tied_llm(
+    api_key: str, model: str, tied: list[dict[str, Any]], evidence_summary: dict[str, Any],
+    weights: dict[str, float], before: dict[str, float], after: dict[str, float],
+    timeout: float = 30.0, client: httpx.Client | None = None,
+    base_url: str = DEFAULT_LLM_BASE_URL,
+    max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
+) -> AnalysisDraft:
+    """The tie-break comparison (2026-10-22): a focused run on the concepts
+    that the deterministic scoring left level.
+
+    Same rules as the analyst - it may not write a number that is not in the
+    payload, and it may only cite evidence IDs that exist.
+    """
+    parsed = complete_json(
+        api_key, model, TIEBREAK_SYSTEM,
+        _with_hint(
+            {
+                "tied_concepts": tied,
+                "evidence": evidence_summary,
+                "weights": weights,
+                "totals_before_tiebreak": before,
+                "totals_after_tiebreak": after,
+            },
+            repair_hint,
+        ),
+        timeout, client, base_url, max_tokens, reasoning,
+        top_level_list_key="claims",
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
+    )
+    parsed = _bridge_claim_synonyms(parsed)
+    claims, rejected, first_error = _salvage_items(
+        parsed.get("claims", []), RichClaim, "claims"
+    )
+    if not claims:
+        if first_error is not None:
+            raise first_error
+        raise ValueError("tie-break comparison returned no claims")
+    return AnalysisDraft(claims=claims, rejected=rejected, raw_head=_raw_head(parsed))
+
+
 __all__ = [
     "draft_plan_llm",
     "draft_claims_llm",
     "review_claims_llm",
     "revise_claims_llm",
+    "compare_tied_llm",
 ]
