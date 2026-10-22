@@ -1,15 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { LogoBanner } from "@/components/LogoBanner";
-import { getRunBundle, RunBundle } from "@/lib/api";
+import {
+  BriefPayload,
+  deleteRun,
+  getRunBundle,
+  newRunId,
+  postRun,
+  resumeRun,
+  RunBundle,
+} from "@/lib/api";
 
 const CONCEPT_ACCENTS: Record<string, string> = {
   A: "#a6c3d8",
   B: "#7d8da2",
   C: "#baa2c5",
+};
+
+/** The workflow states, in the words a reader can follow. */
+const STATE_LABELS: Record<string, string> = {
+  CREATED: "starting up",
+  VALIDATING_INPUT: "checking the brief",
+  RETRIEVING_EVIDENCE: "retrieving Qloo evidence",
+  NORMALIZING_EVIDENCE: "normalizing the evidence",
+  SCORING: "scoring the concepts",
+  DRAFTING_EXPLANATION: "the analyst is writing the reading",
+  CRITIC_REVIEW: "the critic is challenging the claims",
+  REVISING: "revising the flagged claims",
+  FINAL_VALIDATION: "validating the report",
+  ROBUSTNESS_ANALYSIS: "running the sensitivity analysis",
+  COMPLETED: "done",
+  COMPLETED_WITH_LIMITATIONS: "done",
+  FAILED_TERMINAL: "failed",
+  FAILED_RETRYABLE: "interrupted",
 };
 
 function pct(n: number | null): string {
@@ -18,18 +44,88 @@ function pct(n: number | null): string {
 
 function RunPage() {
   const params = useParams<{ runId: string }>();
+  const router = useRouter();
   const runId = params?.runId ?? "";
   const [bundle, setBundle] = useState<RunBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [action, setAction] = useState<string | null>(null);
+  // A run that has not moved for a while is probably interrupted (the
+  // process died, the network dropped) rather than slow.
+  const [stale, setStale] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const next = await getRunBundle(runId);
+      setBundle(next);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [runId]);
 
   useEffect(() => {
     if (!runId) return;
-    getRunBundle(runId)
-      .then(setBundle)
-      .catch((e: Error) => setError(e.message));
+    let active = true;
+    let lastState: string | null = null;
+    let lastChange = Date.now();
+    const tick = async () => {
+      try {
+        const next = await getRunBundle(runId);
+        if (!active) return;
+        setBundle(next);
+        setError(null);
+        if (next.run.state !== lastState) {
+          lastState = next.run.state;
+          lastChange = Date.now();
+          setStale(false);
+        } else if (Date.now() - lastChange > 120000) {
+          setStale(true);
+        }
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 2500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, [runId]);
 
-  if (error) {
+  async function resume() {
+    setAction("Resuming…");
+    try {
+      await resumeRun(runId);
+      setAction(null);
+      setStale(false);
+      await refresh();
+    } catch (e) {
+      setAction(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function startFresh() {
+    setAction("Starting fresh…");
+    try {
+      await deleteRun(runId);
+      const stored = window.sessionStorage.getItem("cc:lastBrief");
+      if (stored) {
+        const brief = JSON.parse(stored) as BriefPayload;
+        const fresh = await postRun(brief, newRunId());
+        setAction(null);
+        router.push(`/analysis/${fresh.run_id}`);
+        return;
+      }
+      setAction(null);
+      router.push("/analysis");
+    } catch (e) {
+      setAction(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (error && !bundle) {
     return (
       <main className="min-h-screen bg-white">
         <div className="mx-auto max-w-6xl px-6 py-20 text-center">
@@ -53,11 +149,72 @@ function RunPage() {
   }
 
   const report = bundle.run.final_report_json;
+  const state = bundle.run.state;
+  const isTerminal = [
+    "COMPLETED",
+    "COMPLETED_WITH_LIMITATIONS",
+    "FAILED_TERMINAL",
+  ].includes(state);
+
   if (!report) {
     return (
       <main className="min-h-screen bg-white">
-        <div className="mx-auto max-w-6xl px-6 py-20 text-center font-serif text-2xl text-mistslate">
-          Run {bundle.run.state} — report pending.
+        <header className="bg-cream">
+          <div className="mx-auto flex max-w-6xl items-start justify-between px-6 py-5">
+            <LogoBanner height={72} />
+            <nav className="flex gap-10 font-serif text-2xl pt-2">
+              <Link href="/" className="font-serif text-ink/80 hover:text-ink">Home</Link>
+              <Link href="/analysis" className="font-serif text-ink/80 hover:text-ink">Analysis</Link>
+            </nav>
+          </div>
+        </header>
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <p className="font-serif text-3xl text-ink">
+            {STATE_LABELS[state] ?? state}
+            {isTerminal ? " — but this run produced no report." : "…"}
+          </p>
+          <p className="mt-2 font-serif text-lg text-mistslate">
+            Run {state} · the report is written at the end of the pipeline.
+          </p>
+          {stale && (
+            <div className="mt-6 rounded-2xl border border-mauve/50 bg-mauve/15 p-6">
+              <p className="font-serif text-xl text-ink">
+                This run has not moved for two minutes. It may have been
+                interrupted (a dropped connection, a closed laptop).
+              </p>
+              <p className="mt-2 font-serif text-lg text-ink/85">
+                Resume re-uses the Qloo evidence it already stored — no Qloo
+                call is repeated. Start fresh deletes this run’s rows and
+                screens again from the beginning.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={resume}
+                  className="rounded-md bg-royal px-5 py-2 font-serif text-lg text-white hover:bg-ink"
+                >
+                  Resume this run
+                </button>
+                <button
+                  type="button"
+                  onClick={startFresh}
+                  className="rounded-md border border-ink/40 px-5 py-2 font-serif text-lg text-ink hover:bg-cream"
+                >
+                  Start fresh
+                </button>
+                {action && (
+                  <span className="self-center font-serif text-base text-mistslate">
+                    {action}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+          {!stale && !isTerminal && (
+            <p className="mt-6 font-serif text-lg text-mistslate">
+              This page follows the run while it works — keep it open.
+            </p>
+          )}
         </div>
       </main>
     );

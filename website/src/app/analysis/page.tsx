@@ -4,7 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogoBanner } from "@/components/LogoBanner";
-import { ApiError, BriefPayload, HardConstraint, getRunBundle, newRunId, postRun } from "@/lib/api";
+import {
+  ApiError,
+  BriefPayload,
+  HardConstraint,
+  deleteRun,
+  getRunBundle,
+  newRunId,
+  postRun,
+  resumeRun,
+} from "@/lib/api";
 import {
   ATTRIBUTE_LABELS,
   ATTRIBUTE_NAMES,
@@ -262,6 +271,13 @@ export default function AnalysisPage() {
   // until then, so the user is not bounced straight back into a 429.
   const [retryAt, setRetryAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // The run id of the attempt in flight (and of a failed one), so the user
+  // can resume it or start fresh.
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [liveState, setLiveState] = useState<string | null>(null);
+  // True when the failed attempt left a run behind that can be resumed.
+  const [partialRun, setPartialRun] = useState(false);
+  const [recovery, setRecovery] = useState<string | null>(null);
 
   useEffect(() => {
     if (retryAt === null) return;
@@ -324,10 +340,29 @@ export default function AnalysisPage() {
         attributes: cleanAttributes(c.attributes),
       })),
     };
+    // The run id is chosen here, so the run can be followed (and found
+    // again) even if this request dies half-way through.
+    const runId = newRunId();
+    setActiveRunId(runId);
+    setLiveState(null);
+    // Keep the brief so a "start fresh" on the results page can screen the
+    // same thing again without re-typing it.
     try {
-      const res = await postRun(payload);
+      window.sessionStorage.setItem("cc:lastBrief", JSON.stringify(payload));
+    } catch {
+      // storage unavailable (private mode) — not fatal
+    }
+    const poller = setInterval(() => {
+      getRunBundle(runId)
+        .then((bundle) => setLiveState(bundle.run.state))
+        .catch(() => undefined);
+    }, 2500);
+    try {
+      const res = await postRun(payload, runId);
+      clearInterval(poller);
       router.push(`/analysis/${res.run_id}`);
     } catch (e) {
+      clearInterval(poller);
       setPhase("error");
       setError(e instanceof Error ? e.message : String(e));
       if (e instanceof ApiError) {
@@ -336,11 +371,58 @@ export default function AnalysisPage() {
           e.retryAfterSeconds ? Date.now() + e.retryAfterSeconds * 1000 : null
         );
         setNow(Date.now());
+        // A server-side failure (5xx) means the run may have been started
+        // and then interrupted: the user can resume it or start fresh.
+        if (e.status >= 500) {
+          getRunBundle(runId)
+            .then((bundle) => {
+              setPartialRun(
+                !bundle.run.final_report_json &&
+                  bundle.run.state !== "COMPLETED" &&
+                  bundle.run.state !== "COMPLETED_WITH_LIMITATIONS"
+              );
+            })
+            .catch(() => setPartialRun(false));
+        }
       } else {
         // A network failure (the API unreachable) is worth retrying too.
         setRetryable(true);
         setRetryAt(null);
       }
+    }
+  }
+
+  /** Continue the interrupted run where it stopped (no Qloo call repeated). */
+  async function resumePartial() {
+    if (!activeRunId) return;
+    setRecovery("Resuming…");
+    try {
+      const res = await resumeRun(activeRunId);
+      setRecovery(null);
+      router.push(`/analysis/${res.run_id}`);
+    } catch (e) {
+      setRecovery(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** Delete the interrupted run's rows and screen the same brief again. */
+  async function startFresh() {
+    if (!activeRunId) return;
+    setRecovery("Starting fresh…");
+    try {
+      await deleteRun(activeRunId);
+      const stored = window.sessionStorage.getItem("cc:lastBrief");
+      if (stored) {
+        const brief = JSON.parse(stored) as BriefPayload;
+        const fresh = await postRun(brief, newRunId());
+        setRecovery(null);
+        router.push(`/analysis/${fresh.run_id}`);
+        return;
+      }
+      setRecovery(null);
+      router.push("/analysis");
+    } catch (e) {
+      setRecovery(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -501,11 +583,17 @@ export default function AnalysisPage() {
             {phase === "running" ? "Running analysis…" : "Run analysis"}
           </button>
 
+          {phase === "running" && liveState && (
+            <p className="mt-3 rounded-md border border-mistline bg-cream px-3 py-2 font-serif text-base text-ink">
+              In progress: {liveState.replace(/_/g, " ").toLowerCase()}…
+            </p>
+          )}
+
           {phase === "error" && (
             <div className="mt-3 rounded-md border border-[#b5563a]/40 bg-[#b5563a]/10 px-3 py-3 font-serif text-base text-ink">
               <p>{error}</p>
               {retryable && (
-                <div className="mt-3 flex items-center gap-4">
+                <div className="mt-3 flex flex-wrap items-center gap-4">
                   <button
                     type="button"
                     onClick={run}
@@ -518,6 +606,37 @@ export default function AnalysisPage() {
                   <span className="font-serif text-sm text-mistslate">
                     Your brief is kept — retrying runs the same screening again.
                   </span>
+                </div>
+              )}
+              {partialRun && (
+                <div className="mt-4 border-t border-[#b5563a]/30 pt-3">
+                  <p className="font-serif text-base text-ink">
+                    This attempt was interrupted after it had already collected
+                    evidence. You can continue it where it stopped (the Qloo
+                    calls are not repeated) or delete the partial run and
+                    screen again.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={resumePartial}
+                      className="rounded-md bg-royal px-4 py-1.5 font-serif text-lg text-white hover:bg-ink"
+                    >
+                      Resume this run
+                    </button>
+                    <button
+                      type="button"
+                      onClick={startFresh}
+                      className="rounded-md border border-ink/40 px-4 py-1.5 font-serif text-lg text-ink hover:bg-cream"
+                    >
+                      Start fresh
+                    </button>
+                    {recovery && (
+                      <span className="self-center font-serif text-sm text-mistslate">
+                        {recovery}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
