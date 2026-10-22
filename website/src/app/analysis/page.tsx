@@ -5,6 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogoBanner } from "@/components/LogoBanner";
 import { ApiError, BriefPayload, HardConstraint, postRun } from "@/lib/api";
+import {
+  ATTRIBUTE_LABELS,
+  ATTRIBUTE_NAMES,
+  cleanAttributes,
+} from "@/lib/attributes";
 import { CRITERIA } from "@/lib/criteria";
 import { squeezeWeights, Weights } from "@/lib/weights";
 
@@ -13,6 +18,7 @@ const ACCENTS = ["#a6c3d8", "#292b43", "#baa2c5"] as const;
 interface ConceptDraft {
   name: string;
   description: string;
+  attributes: Record<string, string>;
 }
 
 function Slider({
@@ -58,12 +64,15 @@ function ConceptCard({
   index,
   draft,
   onChange,
+  valueHints,
 }: {
   index: number;
   draft: ConceptDraft;
   onChange: (d: ConceptDraft) => void;
+  valueHints: string[];
 }) {
   const prepared = draft.name.trim() !== "" && draft.description.trim() !== "";
+  const listId = `concept-attr-values-${index}`;
   return (
     <div className="w-full">
       <p className="font-serif text-xl text-ink">Concept {index + 1}</p>
@@ -89,6 +98,44 @@ function ConceptCard({
             rows={4}
             className="mt-2 w-full resize-none rounded-md border border-mistline bg-white px-2 py-1.5 font-serif text-sm text-ink placeholder:text-mistslate/60 focus:border-royal focus:outline-none"
           />
+          {/* Attributes: a hard constraint can only be checked when the
+              concept carries the same attribute and the same value string. */}
+          <div className="mt-3 border-t border-mistline/70 pt-2">
+            <p className="font-serif text-sm text-mistslate">
+              Attributes (needed for the hard-constraint check)
+            </p>
+            <datalist id={listId}>
+              {valueHints.map((hint) => (
+                <option key={hint} value={hint} />
+              ))}
+            </datalist>
+            <div className="mt-1.5 grid gap-1.5">
+              {ATTRIBUTE_NAMES.map((name) => (
+                <div key={name} className="flex items-center gap-2">
+                  <label
+                    htmlFor={`attr-${index}-${name}`}
+                    className="w-28 shrink-0 font-serif text-sm text-ink/80"
+                  >
+                    {ATTRIBUTE_LABELS[name]}
+                  </label>
+                  <input
+                    id={`attr-${index}-${name}`}
+                    list={listId}
+                    value={draft.attributes[name] ?? ""}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        attributes: { ...draft.attributes, [name]: e.target.value },
+                      })
+                    }
+                    placeholder="—"
+                    maxLength={100}
+                    className="flex-1 rounded-md border border-mistline bg-white px-2 py-1 font-serif text-sm focus:border-royal focus:outline-none"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
       <p
@@ -105,9 +152,11 @@ function ConceptCard({
 function ConstraintsEditor({
   constraints,
   onChange,
+  valueHints,
 }: {
   constraints: HardConstraint[];
   onChange: (c: HardConstraint[]) => void;
+  valueHints: string[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -122,26 +171,38 @@ function ConstraintsEditor({
       </button>
       <p className="mt-1 font-serif text-base text-mistslate">
         Up to 3 attribute/value checks a concept must pass to rank at all
-        (feasibility gate C4).
+        (feasibility gate C4). A concept with no such attribute — or a
+        different value — is not ranked, and the results page says why.
       </p>
       {open && (
         <div className="mt-3 space-y-2">
+          <datalist id="constraint-attr-values">
+            {valueHints.map((hint) => (
+              <option key={hint} value={hint} />
+            ))}
+          </datalist>
           {constraints.map((c, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input
+              <select
                 value={c.attribute}
-                placeholder="attribute (e.g. price_band)"
-                maxLength={40}
                 onChange={(e) => {
                   const next = [...constraints];
                   next[i] = { ...c, attribute: e.target.value };
                   onChange(next);
                 }}
                 className="w-1/2 rounded-md border border-mistline bg-white px-2 py-1.5 font-serif text-sm focus:border-royal focus:outline-none"
-              />
+              >
+                <option value="">choose an attribute…</option>
+                {ATTRIBUTE_NAMES.map((name) => (
+                  <option key={name} value={name}>
+                    {ATTRIBUTE_LABELS[name]} ({name})
+                  </option>
+                ))}
+              </select>
               <input
                 value={c.value}
-                placeholder='allowed value (e.g. "under 10")'
+                list="constraint-attr-values"
+                placeholder='allowed value (e.g. "under 5k")'
                 maxLength={100}
                 onChange={(e) => {
                   const next = [...constraints];
@@ -183,9 +244,9 @@ export default function AnalysisPage() {
   const [audience, setAudience] = useState("");
   const [goal, setGoal] = useState("");
   const [concepts, setConcepts] = useState<ConceptDraft[]>([
-    { name: "", description: "" },
-    { name: "", description: "" },
-    { name: "", description: "" },
+    { name: "", description: "", attributes: {} },
+    { name: "", description: "", attributes: {} },
+    { name: "", description: "", attributes: {} },
   ]);
   const [weights, setWeights] = useState<Weights>(
     Object.fromEntries(CRITERIA.map((c) => [c.id, c.defaultPct])) as Weights
@@ -227,6 +288,20 @@ export default function AnalysisPage() {
     total === 100 &&
     constraints.every((c) => c.attribute.trim() && c.value.trim());
 
+  // The values the concept cards already carry, offered to the constraints
+  // (and vice versa) so both sides use the IDENTICAL string — the backend
+  // compares them exactly.
+  const constraintValues = Array.from(
+    new Set(constraints.map((c) => c.value.trim()).filter((v) => v !== ""))
+  );
+  const conceptValues = Array.from(
+    new Set(
+      concepts.flatMap((c) =>
+        Object.values(c.attributes).map((v) => v.trim())
+      ).filter((v) => v !== "")
+    )
+  );
+
   async function run() {
     setPhase("running");
     setError(null);
@@ -246,7 +321,7 @@ export default function AnalysisPage() {
         concept_id: ids[i],
         name: c.name.trim(),
         description: c.description.trim(),
-        attributes: {},
+        attributes: cleanAttributes(c.attributes),
       })),
     };
     try {
@@ -365,6 +440,7 @@ export default function AnalysisPage() {
                 key={i}
                 index={i}
                 draft={draft}
+                valueHints={constraintValues}
                 onChange={(d) => {
                   const next = [...concepts];
                   next[i] = d;
@@ -374,7 +450,11 @@ export default function AnalysisPage() {
             ))}
           </div>
 
-          <ConstraintsEditor constraints={constraints} onChange={setConstraints} />
+          <ConstraintsEditor
+            constraints={constraints}
+            onChange={setConstraints}
+            valueHints={conceptValues}
+          />
         </div>
 
         {/* Right column */}
