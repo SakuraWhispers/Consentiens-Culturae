@@ -95,8 +95,18 @@ def test_claim_citing_an_invented_evidence_id_is_dropped_and_reported() -> None:
         analyst_fn=analyst,
     )
     rep = out["report"]
-    assert rep["claims"] == []
-    assert any("claim rejected" in lim for lim in rep["limitations"])
+    # The invented id never reaches the report; the stage falls back to the
+    # template (which cites no ids) and says so.
+    assert all(
+        "not-a-real-evidence-id" not in (c.get("evidence_ids") or [])
+        for c in rep["claims"]
+    )
+    # The limitation must NAME the reason (an invented evidence id), not just
+    # that something failed.
+    assert any(
+        "unknown evidence IDs" in lim for lim in rep["limitations"]
+    ), rep["limitations"]
+    assert rep["explanation_template"] is True
 
 
 def test_rule_critic_does_not_flag_empty_ids_when_evidence_exists() -> None:

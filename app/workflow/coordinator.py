@@ -219,6 +219,7 @@ def _deterministic_critic(
                     "evidence_ids": [],
                     "explanation": "claim cites evidence IDs not present in this run",
                     "suggested_action": "remove",
+                    "source": "rules",
                 }
             )
         concept_id = claim.get("concept_id")
@@ -232,6 +233,7 @@ def _deterministic_critic(
                     "evidence_ids": [],
                     "explanation": "no available evidence backs this concept's claim",
                     "suggested_action": "qualify",
+                    "source": "rules",
                 }
             )
         lowered = str(claim.get("text", "")).lower()
@@ -550,6 +552,7 @@ def run_decision(
         claims = None
         last_error: Exception | None = None
         analyst_hint: str | None = None
+        rejected_notes: list[str] = []
         for _attempt in range(2):
             try:
                 out = _call_hook(
@@ -587,11 +590,16 @@ def run_decision(
                 analyst_hint = _repair_hint(exc)
         if claims is None:
             analyst_llm = False
-            limitations.append(
+            message = (
                 "analyst LLM output invalid twice "
                 f"({type(last_error).__name__}: {str(last_error)[:180]}"
                 "); template explanation used"
             )
+            if rejected_notes:
+                # Name WHY each claim was dropped (e.g. an invented evidence
+                # id) instead of only the fact that it was.
+                message += "; rejected: " + "; ".join(rejected_notes[:3])[:200]
+            limitations.append(message)
             claims = _template_claims()
     else:
         claims = _template_claims()

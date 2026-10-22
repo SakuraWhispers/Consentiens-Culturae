@@ -71,4 +71,20 @@ def test_revision_prompt_lists_the_claim_enum_values() -> None:
 def test_analyst_prompt_keeps_its_existing_enum_contract() -> None:
     for value in ("strong", "moderate", "weak", "high", "medium", "low"):
         assert value in ANALYST_SYSTEM
-    assert "evidence_ids MUST be an empty array []" in ANALYST_SYSTEM
+    assert "observation" in ANALYST_SYSTEM
+    assert "recommendation" in ANALYST_SYSTEM
+
+
+def test_analyst_prompt_states_the_evidence_id_contract() -> None:
+    # Changed 2026-10-22: the payload now carries the REAL evidence ids, so
+    # the analyst may cite them. The old wording ("MUST be an empty array")
+    # is what made the critics flag every claim.
+    assert "evidence_ids" in ANALYST_SYSTEM
+    assert "MUST be an empty array" not in ANALYST_SYSTEM
+    assert "NEVER invent" in ANALYST_SYSTEM
+    assert "may leave evidence_ids as []" in ANALYST_SYSTEM
+
+
+def test_critic_prompt_does_not_flag_an_empty_id_list() -> None:
+    assert "An EMPTY list is NOT a defect" in CRITIC_SYSTEM
+    assert "known_evidence_ids" in CRITIC_SYSTEM
