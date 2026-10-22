@@ -39,6 +39,8 @@ from app.workflow.transitions import transition
 SCORING_VERSION_DEFAULT = "v0.1"
 WORKFLOW_VERSION = "w0.1-g2"
 MAX_LIVE_CALLS_PER_RUN = 10
+# How many evidence ids per concept the analyst may cite (payload size cap).
+MAX_EVIDENCE_IDS_PER_CONCEPT = 12
 
 
 def _move(engine: Engine, run_id: str, seq: int, current: RunState, target: RunState) -> tuple[RunState, int]:
@@ -190,10 +192,21 @@ _CAUSAL_PHRASES = (
 
 
 def _deterministic_critic(
-    claims: list[dict[str, Any]], known_ids: set[str]
+    claims: list[dict[str, Any]],
+    known_ids: set[str],
+    available_by_concept: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Rule checks only: unknown evidence IDs, missing evidence, causal phrasing."""
+    """Rule checks only: unknown evidence IDs, missing evidence, causal phrasing.
+
+    MISSING_EVIDENCE is judged from the EVIDENCE the concept actually has
+    (available_by_concept), not from whether the claim happens to carry an id
+    list. Live finding (2026-10-22): the old rule fired on every claim
+    because the analyst was told to leave evidence_ids empty, so the report
+    said "no available evidence backs this concept's claim" for concepts with
+    40 of 40 records available.
+    """
     findings: list[dict[str, Any]] = []
+    available = available_by_concept or {}
     for claim in claims:
         missing = [eid for eid in claim.get("evidence_ids", []) if eid not in known_ids]
         if missing:
@@ -208,7 +221,8 @@ def _deterministic_critic(
                     "suggested_action": "remove",
                 }
             )
-        if not claim.get("evidence_ids"):
+        concept_id = claim.get("concept_id")
+        if available.get(concept_id, 0) == 0 and not claim.get("evidence_ids"):
             findings.append(
                 {
                     "issue_code": "MISSING_EVIDENCE",
@@ -474,6 +488,10 @@ def run_decision(
     move(RunState.DRAFTING_EXPLANATION)
     by_id = {s.concept_id: s for s in scores}
     known_ids = {r.evidence_id for recs in records_by_concept.values() for r in recs}
+    available_by_concept = {
+        cid: sum(1 for r in recs if r.coverage_status == "available")
+        for cid, recs in records_by_concept.items()
+    }
 
     def _template_claims() -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -510,7 +528,22 @@ def run_decision(
         for s in scores
     }
     evidence_summary = {
-        cid: {"available": sum(1 for r in recs if r.coverage_status == "available"), "total": len(recs)}
+        cid: {
+            "available": sum(1 for r in recs if r.coverage_status == "available"),
+            "total": len(recs),
+            # The REAL evidence ids for this concept, capped so the payload
+            # stays small. Live finding (2026-10-22): the analyst was told to
+            # leave evidence_ids empty (the payload had counts only) and both
+            # critics then flagged every claim for citing nothing — the system
+            # required the analyst to produce exactly what the critic had to
+            # flag. A claim that cites an id that exists is checkable; an
+            # invented id is still rejected by _validate_claims.
+            "evidence_ids": [
+                r.evidence_id
+                for r in recs
+                if r.coverage_status == "available"
+            ][:MAX_EVIDENCE_IDS_PER_CONCEPT],
+        }
         for cid, recs in records_by_concept.items()
     }
     if analyst_fn is not None:
@@ -615,9 +648,9 @@ def run_decision(
                 f"({type(last_error).__name__}: {str(last_error)[:180]}"
                 "); deterministic checks used"
             )
-            findings = _deterministic_critic(claims, known_ids)
+            findings = _deterministic_critic(claims, known_ids, available_by_concept)
     else:
-        findings = _deterministic_critic(claims, known_ids)
+        findings = _deterministic_critic(claims, known_ids, available_by_concept)
 
     revision_count = 0
     revisable = [f for f in findings if f.get("suggested_action") == "revise_wording"]
@@ -660,7 +693,7 @@ def run_decision(
         if revised is not None:
             claims = revised
             revision_count = 1
-            findings = findings + _deterministic_critic(claims, known_ids)
+            findings = findings + _deterministic_critic(claims, known_ids, available_by_concept)
         else:
             limitations.append(
                 "revision failed twice "
@@ -692,6 +725,10 @@ def run_decision(
                 "status": s.status,
                 "weighted_total": s.weighted_total,
                 "coverage": s.coverage,
+                # Why a concept is not ranked (hard-constraint gate or
+                # coverage gate). The UI shows this verbatim, so a result with
+                # no winner is never a mystery (2026-10-22).
+                "reason": s.infeasible_reason or s.insufficient_reason,
                 "criterion_scores": [
                     {"criterion": c.criterion, "value": c.value, "weight_applied": c.weight_applied}
                     for c in s.criterion_scores

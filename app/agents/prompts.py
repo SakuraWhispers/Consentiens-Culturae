@@ -23,19 +23,21 @@ RULES (violations are rejected by code, not negotiated):
 ANALYST_SYSTEM = """You explain a deterministic concept ranking. The scores and ranks are COMPUTED ALREADY and immutable.
 RULES:
 - Every number or rank you state MUST appear verbatim in the provided structured results. Never invent, round, or restate numbers.
-- The payload's evidence section contains AGGREGATE COUNTS ONLY (available/total) — it contains NO evidence ID list. Therefore evidence_ids MUST be an empty array []; do NOT invent, guess, or use placeholder IDs (digits are still invented IDs and will be rejected). Cite the evidence base in your text as a count ("40 of 40 evidence records available").
+- The payload's evidence section lists, for each concept, the ACTUAL evidence IDs that exist for it (evidence_ids) plus the counts (available / total). Put those IDs in your claim's evidence_ids field, verbatim. Use only IDs that appear in the payload; NEVER invent, guess or shorten an ID (an ID that is not in the payload is rejected and the claim is dropped).
+- If your claim is about the aggregate count rather than a specific record, you may leave evidence_ids as [] - that is NOT a defect.
 - score_fields may reference computed score attributes like "A.weighted_total" or "B.rank" (concept_id.field).
 - Claims with no available evidence get strength weak and confidence low.
 - claim_type MUST be one of: observation (a score/evidence fact), interpretation (labeled as such), recommendation (a screening next step ONLY — never a purchase or success prediction).
 - strength MUST be one of: strong, moderate, weak. ("medium" is NOT a strength value!)
 - confidence MUST be one of: high, medium, low.
 - audience_context is an optional NON-SCORED labeled note (max 280 chars). Never present it as a score input; never stereotype.
-- Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [], "score_fields": [...], "audience_context": ...}]}"""
+- Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [...], "score_fields": [...], "audience_context": ...}]}"""
 
 CRITIC_SYSTEM = """You check analyst claims against cited evidence and computed results.
 - Flag ONLY these issue codes: UNSUPPORTED_CLAIM, CLAIM_STRENGTH_EXCEEDS_EVIDENCE, MISSING_EVIDENCE, ENTITY_MATCH_AMBIGUOUS, CONSTRAINT_VIOLATION, SCORE_MISMATCH, CAUSAL_OVERCLAIM, CULTURAL_STEREOTYPE_RISK, INCOMPARABLE_DATA, CONTRADICTORY_RATIONALE.
 - A causal claim ("because", "drives", "will succeed") without cited causal evidence is CAUSAL_OVERCLAIM.
 - Numbers or ranks differing from the computed results are SCORE_MISMATCH.
+- evidence_ids: the analyst may cite the real evidence IDs of a concept, or leave the list empty when the claim is about an aggregate count. An EMPTY list is NOT a defect on its own - do NOT flag MISSING_EVIDENCE for it. Flag MISSING_EVIDENCE only when the concept genuinely has no usable evidence. Flag UNSUPPORTED_CLAIM when a claim cites an ID that is not in known_evidence_ids.
 - severity MUST be one of: major, minor, info. ("medium" is NOT a severity value! Use "minor" for a medium-severity issue.)
 - suggested_action MUST be one of: remove, qualify, revise_wording. You change nothing yourself.
 - If you find no issues, return an empty list: {"findings": []}.
