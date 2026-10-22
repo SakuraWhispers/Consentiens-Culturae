@@ -629,6 +629,10 @@ def run_decision(
                         f"({len(rejected_notes)} rejected)"
                     )
                 findings = good
+                # Who said it: the LLM critic or the rule checks. The UI shows
+                # the source so a reader knows which critique is which.
+                for finding in findings:
+                    finding["source"] = "llm"
                 if rejected_notes:
                     limitations.append(
                         f"critic output: {len(rejected_notes)} finding(s) rejected by "
@@ -752,6 +756,12 @@ def run_decision(
         "explanation_template": not analyst_llm,
         "llm_written": analyst_llm or critic_llm,
         "analyst": {"llm_written": analyst_llm, "revision_count": revision_count},
+        "critic": {
+            "llm_written": critic_llm,
+            "findings_count": len(findings),
+            "llm_findings": sum(1 for f in findings if f.get("source") == "llm"),
+            "rule_findings": sum(1 for f in findings if f.get("source") == "rules"),
+        },
         "sensitivity": {"status": "pending"},
         "disclaimer": "Early screening aid. Not a demand forecast.",
     }

@@ -163,24 +163,40 @@ function RunPage() {
             ))}
           </div>
           {infeasible.length > 0 && (
-            <p className="mt-3 font-serif text-lg text-mistslate">
-              Infeasible under the hard constraints:{" "}
-              {infeasible.map((r) => conceptName(r.concept_id)).join(", ")}.
-            </p>
+            <div className="mt-3 rounded-xl border border-mauve/50 bg-mauve/15 p-4">
+              <p className="font-serif text-lg text-ink">
+                Not ranked under the hard constraints:{" "}
+                {infeasible.map((r) => conceptName(r.concept_id)).join(", ")}.
+              </p>
+              <ul className="mt-2 list-disc pl-6">
+                {infeasible.map((r) => (
+                  <li key={r.concept_id} className="font-serif text-base text-ink/85">
+                    <span className="font-sans text-sm text-ink">
+                      {conceptName(r.concept_id)}
+                    </span>
+                    {r.reason ? ` — ${r.reason}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </section>
 
-        {/* Claims */}
-        {report.claims.length > 0 && (
-          <section>
-            <h3 className="font-serif text-3xl text-ink">
-              Reading of the result
-              <span className="ml-3 align-middle font-sans text-xs font-medium text-mistslate">
-                {report.explanation_template
-                  ? "template fallback"
-                  : "written by LLM within limits"}
-              </span>
-            </h3>
+        {/* What the analyst found */}
+        <section className="rounded-2xl border border-mistline bg-white p-7 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-serif text-3xl text-ink">What the analyst found</h3>
+            <span className="rounded bg-royal/10 px-2 py-0.5 font-sans text-xs font-medium text-royal">
+              {report.explanation_template
+                ? "template fallback (the LLM stage did not deliver)"
+                : "written by the LLM analyst, within its limits"}
+            </span>
+          </div>
+          {report.claims.length === 0 ? (
+            <p className="mt-3 font-serif text-lg text-mistslate">
+              No claims were produced for this run.
+            </p>
+          ) : (
             <ul className="mt-4 space-y-3">
               {report.claims.map((c) => (
                 <li key={c.claim_id} className="rounded-xl border border-mistline bg-cream p-4">
@@ -191,7 +207,15 @@ function RunPage() {
                     <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs text-ink/80">
                       {c.strength} · {c.confidence}
                     </span>
-                    <span className="font-sans text-xs text-mistslate">{c.concept_id}</span>
+                    <span className="font-sans text-xs text-mistslate">
+                      concept {c.concept_id}
+                    </span>
+                    {c.evidence_ids && c.evidence_ids.length > 0 && (
+                      <span className="rounded bg-mauve/25 px-2 py-0.5 font-sans text-xs text-ink">
+                        cites {c.evidence_ids.length} evidence record
+                        {c.evidence_ids.length === 1 ? "" : "s"}
+                      </span>
+                    )}
                     {c.qualified && (
                       <span className="rounded bg-mauve/30 px-2 py-0.5 font-sans text-xs text-ink">
                         qualified
@@ -207,25 +231,48 @@ function RunPage() {
                 </li>
               ))}
             </ul>
-          </section>
-        )}
+          )}
+        </section>
 
-        {/* Critic findings */}
-        {report.critic_findings.length > 0 && (
-          <section>
-            <h3 className="font-serif text-3xl text-ink">Critic findings</h3>
+        {/* What the critic challenged */}
+        <section className="rounded-2xl border border-mistline bg-white p-7 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-serif text-3xl text-ink">What the critic challenged</h3>
+            <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs font-medium text-ink/80">
+              {report.critic
+                ? `${report.critic.llm_findings} from the LLM critic · ${report.critic.rule_findings} from the rule checks`
+                : `${report.critic_findings.length} finding(s)`}
+            </span>
+          </div>
+          {report.critic_findings.length === 0 ? (
+            <p className="mt-3 font-serif text-lg text-mistslate">
+              Nothing was challenged: the critique found no issue with the
+              claims above.
+            </p>
+          ) : (
             <ul className="mt-4 space-y-2">
               {report.critic_findings.map((f, i) => (
-                <li key={i} className="rounded-xl border border-mistline bg-white p-4">
-                  <p className="font-sans text-sm font-medium text-ink">
-                    {f.severity.toUpperCase()} · {f.issue_code}
-                  </p>
+                <li key={i} className="rounded-xl border border-mistline bg-cream p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-[#b5563a]/12 px-2 py-0.5 font-sans text-xs font-medium text-[#b5563a]">
+                      {f.severity.toUpperCase()}
+                    </span>
+                    <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs font-medium text-ink">
+                      {f.issue_code}
+                    </span>
+                    <span className="font-sans text-xs text-mistslate">
+                      {f.source === "rules" ? "rule checks" : "LLM critic"}
+                    </span>
+                    <span className="font-sans text-xs text-mistslate">
+                      · suggests {f.suggested_action}
+                    </span>
+                  </div>
                   <p className="mt-1 font-serif text-lg text-ink">{f.explanation}</p>
                 </li>
               ))}
             </ul>
-          </section>
-        )}
+          )}
+        </section>
 
         {/* Sensitivity */}
         <section className="rounded-2xl bg-cream p-8 shadow-sm">
