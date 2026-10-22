@@ -73,4 +73,7 @@ def test_the_report_always_carries_the_critic_meta() -> None:
         "findings_count",
         "llm_findings",
         "rule_findings",
+        "claims_reviewed",
+        "evidence_records_available",
+        "issue_codes",
     }

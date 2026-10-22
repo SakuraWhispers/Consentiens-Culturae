@@ -19,6 +19,11 @@ DEFAULT_SEED = 20261016
 DEFAULT_HALF_WIDTH = 0.20
 
 PERMITTED_PHRASE = "Top-ranked in {pct:.0%} of tested preference scenarios."
+# A tie is stated in its own words (human decision, 2026-10-22): claiming
+# "top-ranked" for concepts that are level would overstate the difference.
+TIE_PERMITTED_PHRASE = "Tied with {others} in {pct:.0%} of tested preference scenarios."
+# Two concepts count as tied within this many points of each other.
+TIE_EPSILON_POINTS = 0.5
 
 
 def sample_weight_vectors(
@@ -86,6 +91,9 @@ def analyze_sensitivity(
         method = "seeded-sampling"
 
     wins: dict[str, int] = {cid: 0 for cid in concept_ids}
+    ties: dict[str, int] = {cid: 0 for cid in concept_ids}
+    tie_with: dict[str, set[str]] = {cid: set() for cid in concept_ids}
+    tie_scenarios = 0
     ranks: dict[str, list[int]] = {cid: [] for cid in concept_ids}
     flip_votes: dict[str, int] = {c: 0 for c in ("C1", "C2", "C3", "C5")}
     base_winner: str | None = None
@@ -107,7 +115,27 @@ def analyze_sensitivity(
                 ranks[s.concept_id].append(s.rank)
         if winner is None:
             continue
-        wins[winner.concept_id] += 1
+        # Is the leader level with another concept in THIS scenario?
+        totals = sorted(
+            (
+                (float(s.weighted_total), s.concept_id)
+                for s in scored
+                if s.rank is not None and s.weighted_total is not None
+            ),
+            reverse=True,
+        )
+        level = (
+            [cid for total, cid in totals if abs(totals[0][0] - total) <= TIE_EPSILON_POINTS]
+            if len(totals) > 1
+            else [winner.concept_id]
+        )
+        if len(level) > 1:
+            tie_scenarios += 1
+            for cid in level:
+                ties[cid] += 1
+                tie_with[cid].update(c for c in level if c != cid)
+        else:
+            wins[winner.concept_id] += 1
         if winner.concept_id != base_winner:
             dev = {c: abs(vec[c] - base[c]) for c in base}
             pivotal = max(dev, key=lambda c: dev[c])
@@ -115,11 +143,20 @@ def analyze_sensitivity(
 
     total = len(vectors)
     frequency = {cid: (wins[cid] / total if total else 0.0) for cid in concept_ids}
+    tie_frequency = {cid: (ties[cid] / total if total else 0.0) for cid in concept_ids}
     rank_range = {
         cid: ([min(ranks[cid]), max(ranks[cid])] if ranks[cid] else [None, None])
         for cid in concept_ids
     }
     pivotal = max(flip_votes, key=lambda c: flip_votes[c]) if sum(flip_votes.values()) else None
+    tie_statements = {
+        cid: TIE_PERMITTED_PHRASE.format(
+            others=", ".join(sorted(tie_with[cid])),
+            pct=tie_frequency[cid],
+        )
+        for cid in concept_ids
+        if ties[cid] > 0
+    }
     return {
         "method": method,
         "seed": seed if method == "seeded-sampling" else None,
@@ -129,6 +166,12 @@ def analyze_sensitivity(
         "statements": {
             cid: PERMITTED_PHRASE.format(pct=frequency[cid]) for cid in concept_ids
         },
+        "tie_frequency": tie_frequency,
+        "tie_statements": tie_statements,
+        # How many scenarios ended in a tie at all (a pairwise tie counts
+        # once, so wins + tie scenarios cover every scenario exactly).
+        "tie_scenarios": tie_scenarios,
+        "tie_scenario_fraction": (tie_scenarios / total if total else 0.0),
         "rank_range": rank_range,
         "pivotal_criterion": pivotal,
         "scoring_version": scoring_version,

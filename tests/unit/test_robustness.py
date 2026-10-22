@@ -47,7 +47,9 @@ def test_analysis_deterministic_with_frequencies_and_range() -> None:
     assert one["scenarios_tested"] == 200
     assert one["seed"] == 7
     total = sum(one["top_rank_frequency"].values())
-    assert abs(total - 1.0) < 1e-9
+    # A scenario in which the leader is level with another concept is a TIE,
+    # not a win (2026-10-22): wins + tie scenarios must cover every scenario.
+    assert abs(total + one["tie_scenario_fraction"] - 1.0) < 1e-9
     assert set(one["rank_range"]) == {"A", "B", "C"}
     assert one["top_rank_frequency"]["A"] > 0
     assert one["top_rank_frequency"]["B"] > 0

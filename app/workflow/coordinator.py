@@ -10,11 +10,13 @@ recorded as a limitation. Code only: no LLM call, no randomness.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from sqlalchemy.engine import Engine
 
 from app.agents.researcher import PlanRejectedError, validate_call
+from app.agents.schemas import ISSUE_CODES
 from app.integrations.qloo_adapter import EvidenceSource, FixtureError, QlooPayload
 from app.integrations.qloo_client import QlooError
 from app.schemas.brief import DecisionBrief
@@ -42,7 +44,42 @@ SCORING_VERSION_DEFAULT = "v0.1"
 WORKFLOW_VERSION = "w0.1-g2"
 MAX_LIVE_CALLS_PER_RUN = 10
 # How many evidence ids per concept the analyst may cite (payload size cap).
-MAX_EVIDENCE_IDS_PER_CONCEPT = 12
+MAX_EVIDENCE_IDS_PER_CONCEPT = 20
+# Two concepts count as tied when their weighted totals are within this many
+# points of each other on the 0-100 scale (human decision, 2026-10-22).
+TIE_EPSILON_POINTS = 0.5
+
+
+def _detect_tie(scores: list[Any], epsilon: float = TIE_EPSILON_POINTS) -> dict[str, Any]:
+    """Name the concepts that are level with the leader (2026-10-22).
+
+    A live run had all three concepts on exactly the same total and still
+    declared one winner. The tie is now detected and reported, so the page
+    can say "A and B are tied" instead of implying a difference.
+    """
+    ranked = [
+        s
+        for s in scores
+        if getattr(s, "rank", None) is not None
+        and getattr(s, "weighted_total", None) is not None
+    ]
+    if not ranked:
+        return {"detected": False, "concepts": [], "spread": None, "threshold": epsilon}
+    ranked.sort(key=lambda s: (-float(s.weighted_total), s.concept_id))
+    top = float(ranked[0].weighted_total)
+    tied = [
+        s.concept_id
+        for s in ranked
+        if abs(top - float(s.weighted_total)) <= epsilon
+    ]
+    spread = round(top - min(float(s.weighted_total) for s in ranked if s.concept_id in tied), 4)
+    return {
+        "detected": len(tied) > 1,
+        "concepts": tied,
+        "spread": spread,
+        "threshold": epsilon,
+        "top_total": round(top, 4),
+    }
 
 
 def _move(
@@ -360,13 +397,31 @@ def run_decision(
 
     def move(target: RunState, detail: dict[str, Any] | None = None) -> None:
         nonlocal state, seq
+        _close_stage()
         state, seq = _move(engine, run_id, seq, state, target, detail)
+        _open_stage()
 
     def note(event_type: str, payload: dict[str, Any]) -> None:
         """Record a non-state event (e.g. a rejected agent output) for audit."""
         nonlocal seq
         seq += 1
         add_workflow_event(engine, run_id, seq, state.value, event_type, payload)
+
+    # How long each stage took (2026-10-22): the results page shows it, so
+    # "the critic found nothing" can be read next to "the critic ran for
+    # 5 minutes".
+    stage_started: dict[str, float] = {}
+    stage_seconds: list[dict[str, Any]] = []
+
+    def _open_stage() -> None:
+        stage_started[state.value] = time.monotonic()
+
+    def _close_stage() -> None:
+        started = stage_started.pop(state.value, None)
+        if started is not None:
+            stage_seconds.append(
+                {"stage": state.value, "seconds": round(time.monotonic() - started, 1)}
+            )
 
     if state is RunState.CREATED:
         move(RunState.VALIDATING_INPUT)
@@ -385,6 +440,7 @@ def run_decision(
     concept_names = {c.concept_id: c.name for c in brief.concepts}
     concept_ids = [c.concept_id for c in brief.concepts]
     calls: list[tuple[str | None, str, dict[str, str]]] = []
+    research_mode = "deterministic"
     if restored_records is not None:
         # RESUME: the previous attempt already paid for the Qloo calls.
         records_by_concept = {
@@ -419,6 +475,7 @@ def run_decision(
             )
             if calls:
                 limitations.extend(plan_limits)
+                research_mode = "agent"
                 for note_text in agent_rejected:
                     limitations.append(f"researcher plan: {note_text[:160]}")
                 if agent_rejected:
@@ -514,6 +571,40 @@ def run_decision(
                     for r in recs
                 ],
             )
+
+    # What the researcher did and found (2026-10-22): the retrieval plan and
+    # the evidence it produced, so the page can show the work instead of
+    # asking the reader to trust it.
+    research_block = {
+        "mode": (
+            "resumed"
+            if restored_records is not None
+            else ("agent" if research_mode == "agent" else "deterministic")
+        ),
+        "calls": [
+            {"endpoint": endpoint, "params": params, "owner": owner}
+            for owner, endpoint, params in calls
+        ],
+        "evidence": {
+            "total": sum(len(recs) for recs in records_by_concept.values()),
+            "available": sum(
+                1
+                for recs in records_by_concept.values()
+                for r in recs
+                if r.coverage_status == "available"
+            ),
+            "per_concept": {
+                cid: {
+                    "available": sum(
+                        1 for r in recs if r.coverage_status == "available"
+                    ),
+                    "total": len(recs),
+                }
+                for cid, recs in records_by_concept.items()
+            },
+        },
+        "qloo_calls": live_calls,
+    }
 
     move(RunState.NORMALIZING_EVIDENCE)
     raw_values, diagnostics = extract_raw_values(records_by_concept)
@@ -793,6 +884,7 @@ def run_decision(
     move(RunState.FINAL_VALIDATION)
     winner = next((s for s in scores if s.rank == 1), None)
     fixture_mode = bool(fixture_flags) and all(fixture_flags)
+    tie = _detect_tie(scores)
 
     report: dict[str, Any] = {
         "run_id": run_id,
@@ -833,7 +925,14 @@ def run_decision(
             "findings_count": len(findings),
             "llm_findings": sum(1 for f in findings if f.get("source") == "llm"),
             "rule_findings": sum(1 for f in findings if f.get("source") == "rules"),
+            # The scope of the critique (2026-10-22): "0 findings" must read as
+            # "it ran and found nothing", not as "it never ran".
+            "claims_reviewed": len(claims),
+            "evidence_records_available": sum(available_by_concept.values()),
+            "issue_codes": list(ISSUE_CODES),
         },
+        "research": research_block,
+        "tie": tie,
         "sensitivity": {"status": "pending"},
         "disclaimer": "Early screening aid. Not a demand forecast.",
     }
@@ -851,6 +950,8 @@ def run_decision(
     terminal = RunState.COMPLETED_WITH_LIMITATIONS if limitations else RunState.COMPLETED
     move(terminal)
     report["state"] = terminal.value
+    _close_stage()
+    report["stages"] = stage_seconds
 
     # The critic findings are stored with the rest of the run (the evidence
     # and the scores were already written when their stage completed).

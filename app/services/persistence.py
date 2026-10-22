@@ -362,8 +362,24 @@ def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
                     "revision_count": run.revision_count,
                 },
                 "evidence": [
-                    {"evidence_id": r.evidence_id, "qloo_entity_id": r.qloo_entity_id,
-                     "coverage_status": r.coverage_status, "match_quality": r.match_quality}
+                    {
+                        "evidence_id": r.evidence_id,
+                        "qloo_entity_id": r.qloo_entity_id,
+                        # The full provenance of the record (2026-10-22): the
+                        # page lists every evidence row with its name, so a
+                        # reader can check what the run actually used.
+                        "entity_name": (r.evidence_json or {}).get("entity_name"),
+                        "entity_subtype": (r.evidence_json or {}).get("entity_subtype"),
+                        "popularity": (r.evidence_json or {}).get("popularity"),
+                        "tags": list((r.evidence_json or {}).get("tags") or [])[:8],
+                        "match_quality": r.match_quality,
+                        "coverage_status": r.coverage_status,
+                        "endpoint_or_operation": r.endpoint_or_operation,
+                        "query_params_redacted": r.query_params_redacted_json or {},
+                        "source": r.source,
+                        "fixture_mode": bool(r.fixture_mode),
+                        "limitations": list((r.evidence_json or {}).get("limitations") or []),
+                    }
                     for r in s.query(EvidenceRow).filter_by(run_id=run_id).all()
                 ],
                 "scores": [

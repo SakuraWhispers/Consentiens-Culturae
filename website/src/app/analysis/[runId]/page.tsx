@@ -266,13 +266,41 @@ function RunPage() {
             .map(([l, w]) => `${l} ${Math.round((w as number) * 100)}%`)
             .join(" · ")}
         </p>
+
+        {/* Table of contents: what the page shows and where */}
+        <nav className="mt-6 rounded-2xl border border-mistline bg-cream p-5">
+          <p className="font-serif text-lg text-ink">On this page</p>
+          <ul className="mt-2 grid gap-x-8 gap-y-1 text-base sm:grid-cols-2">
+            {[
+              ["result", "The ranked result"],
+              ["researcher", "1 · What the researcher did and found"],
+              ["analyst", "2 · What the analyst analysed and found"],
+              ["critique", "3 · What the critique criticised"],
+              ["explainer", "How the seeding and the weights work"],
+              ["evidence", `The evidence, in full (${bundle.evidence.length} records)`],
+              ["sensitivity", "Sensitivity analysis"],
+              ["limitations", "Limitations and notes"],
+            ].map(([id, label]) => (
+              <li key={id}>
+                <a
+                  href={`#${id}`}
+                  className="font-serif text-royal underline decoration-royal/40 underline-offset-4 hover:decoration-royal"
+                >
+                  {label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </div>
 
       <div className="mx-auto max-w-6xl space-y-10 px-6 py-10">
         {/* Winner banner */}
         {report.winner && winner && (
-          <section className="rounded-2xl bg-cream p-8 shadow-sm">
-            <p className="font-serif text-lg text-mistslate">Top-ranked concept</p>
+          <section id="result" className="rounded-2xl bg-cream p-8 shadow-sm">
+            <p className="font-serif text-lg text-mistslate">
+              {report.tie?.detected ? "Leading concepts (tied)" : "Top-ranked concept"}
+            </p>
             <h2 className="mt-1 font-serif text-5xl text-ink">
               {conceptName(report.winner)}
               <span
@@ -285,6 +313,31 @@ function RunPage() {
               Weighted total {winner.weighted_total?.toFixed(1)} of 100 ·
               coverage {pct(winner.coverage)}
             </p>
+            {report.tie?.detected && (
+              <div className="mt-3 rounded-lg border border-mauve/60 bg-mauve/15 px-4 py-3">
+                <p className="font-serif text-lg text-ink">
+                  <span className="font-sans text-sm font-medium uppercase tracking-wide text-ink/70">
+                    Tied
+                  </span>{" "}
+                  — {report.tie.concepts.map((c) => conceptName(c)).join(" and ")} are
+                  level on the total (a gap of{" "}
+                  {report.tie.spread?.toFixed(2)} points, which is within the{" "}
+                  {report.tie.threshold}-point tie window). The order above is the
+                  engine&apos;s tie-break, not a measured difference.
+                </p>
+                {report.sensitivity.tie_statements && (
+                  <ul className="mt-2 space-y-1">
+                    {report.tie.concepts.map((c) =>
+                      report.sensitivity.tie_statements?.[c] ? (
+                        <li key={c} className="font-serif text-base text-ink/85">
+                          {conceptName(c)}: {report.sensitivity.tie_statements[c]}
+                        </li>
+                      ) : null
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
             <div className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {winner.criterion_scores.map((cs) => (
                 <div key={cs.criterion} className="rounded-lg border border-mistline bg-white p-4">
@@ -339,16 +392,87 @@ function RunPage() {
           )}
         </section>
 
-        {/* What the analyst found */}
-        <section className="rounded-2xl border border-mistline bg-white p-7 shadow-sm">
+        {/* 1 · What the researcher did and found */}
+        <section
+          id="researcher"
+          className="rounded-2xl border border-mistline bg-white p-7 shadow-sm"
+        >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="font-serif text-3xl text-ink">What the analyst found</h3>
+            <h3 className="font-serif text-3xl text-ink">
+              1 · What the researcher did and found
+            </h3>
+            <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs font-medium text-ink/80">
+              {report.research.mode === "agent"
+                ? "plan written by the LLM researcher"
+                : report.research.mode === "resumed"
+                  ? "resumed — the stored evidence was reused"
+                  : "deterministic plan (the agent plan was not usable)"}
+            </span>
+          </div>
+          <p className="mt-3 font-serif text-lg text-ink/85">
+            {report.research.qloo_calls} Qloo call
+            {report.research.qloo_calls === 1 ? "" : "s"} ·{" "}
+            {report.research.evidence.available} of {report.research.evidence.total}{" "}
+            evidence records usable
+            {report.research.evidence.total !== report.research.evidence.available
+              ? " — the rest are partial or unmatched, and are listed with their reasons below."
+              : "."}
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-mistline font-sans text-xs uppercase tracking-wide text-mistslate">
+                  <th className="py-1 pr-3">Call</th>
+                  <th className="py-1 pr-3">Params (redacted)</th>
+                  <th className="py-1">For concept</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.research.calls.map((call, i) => (
+                  <tr key={i} className="border-b border-mistline/60">
+                    <td className="py-1.5 pr-3 font-sans text-ink">{call.endpoint}</td>
+                    <td className="py-1.5 pr-3 font-sans text-ink/80">
+                      {Object.entries(call.params)
+                        .map(([k, v]) => `${k}=${v}`)
+                        .join("  ") || "—"}
+                    </td>
+                    <td className="py-1.5 font-sans text-ink/80">
+                      {call.owner ? conceptName(call.owner) : "all concepts (market-level)"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 font-serif text-sm text-mistslate">
+            Only two Qloo endpoints are ever used — <code>search</code> (find
+            entities) and <code>insights</code> (measure them) — and the
+            parameters above are checked against a fixed allowlist before any
+            call is made.
+          </p>
+        </section>
+
+        {/* 2 · What the analyst analysed and found */}
+        <section
+          id="analyst"
+          className="rounded-2xl border border-mistline bg-white p-7 shadow-sm"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-serif text-3xl text-ink">
+              2 · What the analyst analysed and found
+            </h3>
             <span className="rounded bg-royal/10 px-2 py-0.5 font-sans text-xs font-medium text-royal">
               {report.explanation_template
                 ? "template fallback (the LLM stage did not deliver)"
                 : "written by the LLM analyst, within its limits"}
             </span>
           </div>
+          <p className="mt-3 font-serif text-lg text-ink/85">
+            The analyst received the computed ranks and totals (it may not
+            change them), the evidence counts per concept, the weights you
+            set, and the real evidence IDs it may cite. It wrote{" "}
+            {report.claims.length} claim{report.claims.length === 1 ? "" : "s"}.
+          </p>
           {report.claims.length === 0 ? (
             <p className="mt-3 font-serif text-lg text-mistslate">
               No claims were produced for this run.
@@ -391,20 +515,37 @@ function RunPage() {
           )}
         </section>
 
-        {/* What the critic challenged */}
-        <section className="rounded-2xl border border-mistline bg-white p-7 shadow-sm">
+        {/* 3 · What the critique criticised */}
+        <section
+          id="critique"
+          className="rounded-2xl border border-mistline bg-white p-7 shadow-sm"
+        >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="font-serif text-3xl text-ink">What the critic challenged</h3>
+            <h3 className="font-serif text-3xl text-ink">
+              3 · What the critique criticised
+            </h3>
             <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs font-medium text-ink/80">
               {report.critic
                 ? `${report.critic.llm_findings} from the LLM critic · ${report.critic.rule_findings} from the rule checks`
                 : `${report.critic_findings.length} finding(s)`}
             </span>
           </div>
+          <p className="mt-3 font-serif text-lg text-ink/85">
+            The critique ran. It checked {report.critic.claims_reviewed} claim
+            {report.critic.claims_reviewed === 1 ? "" : "s"} against{" "}
+            {report.critic.evidence_records_available} usable evidence record
+            {report.critic.evidence_records_available === 1 ? "" : "s"}, looking
+            for these {report.critic.issue_codes.length} issue codes:{" "}
+            <span className="font-sans text-sm text-ink/70">
+              {report.critic.issue_codes.join(", ")}
+            </span>
+            .
+          </p>
           {report.critic_findings.length === 0 ? (
-            <p className="mt-3 font-serif text-lg text-mistslate">
-              Nothing was challenged: the critique found no issue with the
-              claims above.
+            <p className="mt-2 font-serif text-lg text-mistslate">
+              It found nothing to challenge: no claim contradicted the computed
+              results, cited an unknown evidence ID, or overreached into a
+              causal claim. A clean critique is a result, not a missing step.
             </p>
           ) : (
             <ul className="mt-4 space-y-2">
@@ -431,8 +572,124 @@ function RunPage() {
           )}
         </section>
 
+        {/* How the seeding and the weights work (plain language) */}
+        <section
+          id="explainer"
+          className="rounded-2xl border border-ink/20 bg-cream p-7 shadow-sm"
+        >
+          <h3 className="font-serif text-3xl text-ink">
+            How the seeding and the weights work
+          </h3>
+          <p className="mt-3 font-serif text-lg leading-relaxed text-ink/85">
+            <strong>Your sliders become weights.</strong> Each percentage is
+            divided by 100 (35% becomes 0.35) and the engine needs the four to
+            add up to exactly 1.00 — the analysis form will not submit
+            otherwise. A criterion with no evidence drops out and its share is
+            spread over the others, and the hard-constraint check is a
+            pass/fail gate: it never carries a share at all. Each criterion is
+            then normalised across the three concepts, multiplied by its
+            weight, and added up. Nothing in that arithmetic is written by a
+            language model.
+          </p>
+          <p className="mt-3 font-serif text-lg leading-relaxed text-ink/85">
+            <strong>The seeding is what makes the percentages reproducible.</strong>{" "}
+            We do not guess. We generate {report.sensitivity.scenarios_tested}{" "}
+            alternative weightings around yours (each criterion moved by up to
+            20 points, then re-balanced to 100%) using a fixed seed
+            {report.sensitivity.seed ? ` (${report.sensitivity.seed})` : ""}, so
+            the same brief always produces the same scenarios and the same
+            percentages. The sentence below is therefore a measurement, not a
+            lucky draw:{" "}
+            {report.sensitivity.tie_scenarios
+              ? `${report.sensitivity.tie_scenarios} of the ${report.sensitivity.scenarios_tested} scenarios ended in a tie, and a tie is reported as a tie.`
+              : "no scenario ended in a tie."}
+          </p>
+          {report.stages && report.stages.length > 0 && (
+            <p className="mt-3 font-serif text-base text-ink/75">
+              <strong>How long each stage took:</strong>{" "}
+              {report.stages
+                .map((s) => `${s.stage.replace(/_/g, " ").toLowerCase()} ${s.seconds}s`)
+                .join(" · ")}
+            </p>
+          )}
+        </section>
+
+        {/* The evidence, in full */}
+        <section id="evidence" className="rounded-2xl border border-mistline bg-white p-7 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-serif text-3xl text-ink">The evidence, in full</h3>
+            <span className="rounded bg-mistline/70 px-2 py-0.5 font-sans text-xs font-medium text-ink/80">
+              {bundle.evidence.length} record
+              {bundle.evidence.length === 1 ? "" : "s"} from{" "}
+              {report.research.qloo_calls} Qloo call
+              {report.research.qloo_calls === 1 ? "" : "s"}
+            </span>
+          </div>
+          <p className="mt-2 font-serif text-base text-mistslate">
+            Every record the run used, with the entity it came from, how well
+            it matched, and the query that found it. The parameters are
+            redacted; no key is ever stored here.
+          </p>
+          <details className="mt-3">
+            <summary className="cursor-pointer font-serif text-lg text-royal">
+              Show the {bundle.evidence.length} evidence records
+            </summary>
+            <div className="mt-3 max-h-[32rem] overflow-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-mistline font-sans text-xs uppercase tracking-wide text-mistslate">
+                    <th className="py-1 pr-3">Entity</th>
+                    <th className="py-1 pr-3">Popularity</th>
+                    <th className="py-1 pr-3">Match</th>
+                    <th className="py-1 pr-3">Coverage</th>
+                    <th className="py-1">Found by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bundle.evidence.map((e) => (
+                    <tr key={e.evidence_id} className="border-b border-mistline/60 align-top">
+                      <td className="py-1.5 pr-3">
+                        <span className="font-serif text-ink">
+                          {e.entity_name ?? e.qloo_entity_id ?? "—"}
+                        </span>
+                        {e.entity_subtype && (
+                          <span className="ml-2 font-sans text-xs text-mistslate">
+                            {e.entity_subtype}
+                          </span>
+                        )}
+                        {e.limitations && e.limitations.length > 0 && (
+                          <span className="ml-2 font-sans text-xs text-[#b5563a]">
+                            {e.limitations.join("; ")}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-3 font-sans text-ink/80">
+                        {e.popularity === null || e.popularity === undefined
+                          ? "—"
+                          : e.popularity.toFixed(3)}
+                      </td>
+                      <td className="py-1.5 pr-3 font-sans text-ink/80">
+                        {e.match_quality}
+                      </td>
+                      <td className="py-1.5 pr-3 font-sans text-ink/80">
+                        {e.coverage_status}
+                      </td>
+                      <td className="py-1.5 font-sans text-xs text-mistslate">
+                        {e.endpoint_or_operation}
+                        {Object.entries(e.query_params_redacted ?? {})
+                          .map(([k, v]) => ` ${k}=${v}`)
+                          .join("")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
         {/* Sensitivity */}
-        <section className="rounded-2xl bg-cream p-8 shadow-sm">
+        <section id="sensitivity" className="rounded-2xl bg-cream p-8 shadow-sm">
           <h3 className="font-serif text-3xl text-ink">Sensitivity analysis</h3>
           <p className="mt-2 font-serif text-lg text-mistslate">
             {report.sensitivity.scenarios_tested} preference scenarios tested
@@ -447,6 +704,11 @@ function RunPage() {
                 <span className="font-sans text-sm font-medium text-royal">{cid}</span>
                 {" — "}
                 {statement}
+                {report.sensitivity.tie_statements?.[cid] && (
+                  <span className="block text-ink/80">
+                    {report.sensitivity.tie_statements[cid]}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -454,7 +716,7 @@ function RunPage() {
 
         {/* Limitations */}
         {report.limitations.length > 0 && (
-          <section>
+          <section id="limitations">
             <h3 className="font-serif text-3xl text-ink">Limitations</h3>
             <ul className="mt-2 list-disc pl-6">
               {report.limitations.map((l, i) => (
