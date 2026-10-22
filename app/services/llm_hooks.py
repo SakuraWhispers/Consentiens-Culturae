@@ -28,6 +28,7 @@ from app.agents.analyst import (
     compare_tied_llm,
     draft_claims_llm,
     draft_plan_llm,
+    draft_report_llm,
     review_claims_llm,
     revise_claims_llm,
 )
@@ -266,12 +267,30 @@ def build_hooks(
             raw_head=out.raw_head,
         )
 
+    def reporter_fn(
+        payload: dict[str, Any],
+        repair_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """The verbose report (Batch 3): prose, written only after the
+        critique succeeded; the coordinator's number guard judges it."""
+
+        def once() -> str:
+            return draft_report_llm(
+                main_key, m["model"], payload,
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
+            )
+
+        return {"report": paced(once)()}
+
     return {
         "researcher_fn": researcher_fn,
         "analyst_fn": analyst_fn,
         "critic_fn": critic_fn,
         "revise_fn": revise_fn,
         "tiebreak_fn": tiebreak_fn,
+        "reporter_fn": reporter_fn,
     }
 
 

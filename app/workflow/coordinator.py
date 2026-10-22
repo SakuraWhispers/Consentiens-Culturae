@@ -10,6 +10,7 @@ recorded as a limitation. Code only: no LLM call, no randomness.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -125,6 +126,93 @@ def _detect_tie(scores: list[Any], epsilon: float = TIE_EPSILON_POINTS) -> dict[
         "threshold": epsilon,
         "top_total": round(top, 4),
     }
+
+
+# --------------------------------------------------------------------------
+# The verbose report (2026-10-22, Batch 3): the number guard.
+#
+# The reporter model may only use numbers from the payload it was given (or
+# that number rounded to one decimal, or a percent phrasing of a payload
+# fraction). These helpers decide that deterministically: they are the reason
+# an invented "47 percent of the market" can never reach the page.
+# --------------------------------------------------------------------------
+
+_NUM_TOKEN_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w])")
+
+# Keys whose strings are identifiers (hex ids, version tags), never prose -
+# their digit runs would quietly legalise invented numbers.
+_NUMBER_SKIP_KEYS = frozenset(
+    {
+        "claim_id",
+        "evidence_ids",
+        "evidence_id",
+        "qloo_entity_id",
+        "entity_id",
+        "run_id",
+        "scoring_version",
+        "workflow_version",
+    }
+)
+
+
+def _collect_allowed_numbers(
+    node: Any, out: set[float] | None = None, key: str | None = None
+) -> set[float]:
+    """Every number that is legal in the verbose prose: payload numbers plus
+    numbers inside the payload's own prose fields, minus identifier digit
+    runs. A 32-hex run inside a string is not a number."""
+    out = set() if out is None else out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            _collect_allowed_numbers(v, out, k if isinstance(k, str) else None)
+    elif isinstance(node, list):
+        for v in node:
+            _collect_allowed_numbers(v, out, key)
+    elif isinstance(node, bool):
+        pass
+    elif isinstance(node, (int, float)):
+        out.add(float(node))
+    elif isinstance(node, str) and key not in _NUMBER_SKIP_KEYS:
+        if not re.fullmatch(r"[0-9a-fA-F-]{8,}", node):
+            for m in _NUM_TOKEN_RE.finditer(node):
+                token = m.group(1)
+                if len(token.split(".")[0]) <= 6:
+                    out.add(float(token))
+    return out
+
+
+def _number_ok(token: str, allowed: set[float]) -> bool:
+    value = float(token)
+    decimals = len(token.partition(".")[2])
+    for v in allowed:
+        if round(v, decimals) == value:
+            return True
+        # A percent phrasing of a payload fraction: 0.25 -> "25 percent".
+        if round(v * 100.0, decimals) == value:
+            return True
+    return False
+
+
+def _number_violations(prose: str, allowed: set[float]) -> list[tuple[str, float]]:
+    return [
+        (m.group(1), float(m.group(1)))
+        for m in _NUM_TOKEN_RE.finditer(prose)
+        if not _number_ok(m.group(1), allowed)
+    ]
+
+
+class _NumberGuardError(ValueError):
+    """Raised (internally) so the retry hint can NAME the offending numbers."""
+
+    def __init__(self, tokens: list[str]) -> None:
+        super().__init__("prose used numbers that are not in the payload")
+        self.hint = (
+            "REJECTED: your prose used the number(s) " + ", ".join(tokens)
+            + " which do not appear in the payload. Rewrite the report using "
+            "ONLY numbers from the payload (or their one-decimal rounding, or "
+            "a percent phrasing of a payload fraction). No other numbers may "
+            "appear."
+        )
 
 
 def _move(
@@ -384,6 +472,160 @@ def _validate_critic_output(
     return findings
 
 
+def _template_verbose_report(brief: DecisionBrief, report: dict[str, Any]) -> str:
+    """The deterministic verbose report (never an LLM).
+
+    Written from the computed report only, so it is honest by construction.
+    Used whenever the reporter model may not or cannot write: no LLM
+    configured, the critique did not complete, or the model kept writing
+    numbers that are not in the payload.
+    """
+    names = {c.concept_id: c.name for c in brief.concepts}
+    ranks = report.get("ranks", [])
+    ranked = [r for r in ranks if r.get("status") == "RANKED"]
+    ranked.sort(key=lambda r: (r.get("rank") or 99, r["concept_id"]))
+    infeasible = [r for r in ranks if r.get("status") != "RANKED"]
+    research = report.get("research", {})
+    sensitivity = report.get("sensitivity", {})
+    claims = report.get("claims", [])
+    critique = report.get("critic", {})
+    limitations = report.get("limitations", [])
+
+    parts: list[str] = []
+
+    parts.append(
+        f"The brief asked which of three competing product concepts to take "
+        f"forward for the business goal: {brief.business_goal}. The market was "
+        f"{brief.market}; the intended audience: {brief.audience_description}. "
+        f"The three concepts entered were "
+        + ", ".join(f"{names.get(c.concept_id, c.concept_id)} ({c.concept_id})" for c in brief.concepts)
+        + "."
+    )
+    plan_owner = research.get("mode", "deterministic")
+    raw_calls = research.get("calls")
+    call_count = len(raw_calls) if isinstance(raw_calls, list) else research.get("qloo_calls", 0)
+    parts.append(
+        f"Evidence was retrieved with {plan_owner} planning in "
+        f"{call_count} Qloo call(s): "
+        f"{research.get('evidence', {}).get('available', 0)} of "
+        f"{research.get('evidence', {}).get('total', 0)} evidence records carry "
+        f"usable data, split across the concepts as "
+        + ", ".join(
+            f"{names.get(cid, cid)} {counts.get('available', 0)}/{counts.get('total', 0)}"
+            for cid, counts in research.get("evidence", {}).get("per_concept", {}).items()
+        )
+        + ". Each record keeps its source, query and coverage, listed in full in "
+        "the evidence section."
+    )
+
+    if ranked:
+        lead = ranked[0]
+        headers = [
+            r for r in ranks
+            if r.get("weighted_total") is not None
+            and len([x for x in ranks if x.get("weighted_total") == r.get("weighted_total")]) > 1
+        ]
+        if headers:
+            tied_names = ", ".join(
+                names.get(r["concept_id"], r["concept_id"]) for r in headers
+            )
+            parts.append(
+                f"Two or more concepts are LEVEL on the weighted total: {tied_names}. "
+                "The engine does not invent a difference it cannot measure. "
+                + report.get("tiebreak", {}).get("note", "")
+                + " Cultural affinity is not purchase intent: the order is a "
+                "screening rank, not a demand forecast."
+            )
+        else:
+            parts.append(
+                f"{names.get(lead['concept_id'], lead['concept_id'])} leads the screening "
+                f"with a weighted total of {lead['weighted_total']:.1f} of 100 and "
+                f"evidence coverage of {lead['coverage'] * 100:.1f} percent. Its "
+                "per-criterion values: "
+                + ", ".join(
+                    f"{c['criterion']} {c['value']:.2f} (weight {c['weight_applied'] * 100:.0f} percent)"
+                    for c in lead.get("criterion_scores", [])
+                    if c.get("value") is not None
+                )
+                + "."
+            )
+            if len(ranked) > 1:
+                parts.append(
+                    "The other ranked concepts: "
+                    + "; ".join(
+                        f"{names.get(r['concept_id'], r['concept_id'])} at "
+                        f"{r['weighted_total']:.1f} (coverage "
+                        f"{r['coverage'] * 100:.1f} percent)"
+                        for r in ranked[1:]
+                    )
+                    + "."
+                )
+        for r in ranked:
+            stmt = sensitivity.get("statements", {}).get(r["concept_id"])
+            if stmt:
+                sentence = str(stmt).rstrip(".")
+                parts.append(f"{names.get(r['concept_id'], r['concept_id'])}: {sentence}.")
+    if infeasible:
+        parts.append(
+            "Not ranked, and why: "
+            + "; ".join(
+                f"{names.get(r['concept_id'], r['concept_id'])} — "
+                f"{r.get('reason') or 'it fails the hard constraints'}"
+                for r in infeasible
+            )
+            + "."
+        )
+    if claims:
+        parts.append(
+            "The analysis notes: "
+            + " ".join(
+                f"({names.get(c.get('concept_id'), c.get('concept_id'))}) "
+                f"{c.get('text', '')}" for c in claims
+            )
+        )
+    if critique.get("claims_reviewed"):
+        if critique.get("findings_count"):
+            parts.append(
+                f"The critique reviewed {critique['claims_reviewed']} claim(s) and "
+                f"raised {critique['findings_count']} finding(s) "
+                f"({critique.get('llm_findings', 0)} from the critic model, "
+                f"{critique.get('rule_findings', 0)} from the deterministic rule "
+                "checks). The affected claims are qualified in the critique "
+                "section, verbatim."
+            )
+        else:
+            parts.append(
+                f"The critique reviewed {critique['claims_reviewed']} claim(s) "
+                f"over {critique.get('evidence_records_available', 0)} available "
+                "evidence records and found nothing to challenge. A clean "
+                "critique over the full claims and evidence is a result, not an "
+                "absence."
+            )
+    sc = sensitivity.get("scenarios_tested")
+    if sc:
+        tie_part = (
+            f" {sensitivity.get('tie_scenarios', 0)} of the {sc} scenarios ended "
+            "in a tie, and a tie is reported as a tie."
+            if sensitivity.get("tie_scenarios")
+            else " No scenario ended in a tie."
+        )
+        parts.append(
+            f"The sensitivity analysis re-ran the scoring under {sc} seeded "
+            "preference scenarios (the weights varied inside the ranges you "
+            "set, + or - a third).\n" + tie_part
+        )
+    if limitations:
+        parts.append(
+            "Limitations recorded by the engine: " + "; ".join(limitations) + "."
+        )
+    parts.append(
+        "Screening aid; not a demand forecast. Signals ask how well each "
+        "concept fits the audience's cultural affinities, not whether it will "
+        "sell."
+    )
+    return "\n\n".join(parts)
+
+
 def run_decision(
     engine: Engine,
     brief: DecisionBrief,
@@ -396,6 +638,7 @@ def run_decision(
     critic_fn=None,
     revise_fn=None,
     tiebreak_fn=None,
+    reporter_fn=None,
     run_id: str | None = None,
     restore_evidence: bool = False,
 ) -> dict[str, Any]:
@@ -1156,6 +1399,131 @@ def run_decision(
         scoring_version,
     )
     report["sensitivity"] = sensitivity
+
+    # The verbose report (2026-10-22, Batch 3). The reporter model writes the
+    # full prose ONLY after the critique completed; its numbers are guarded
+    # deterministically (worst case two attempts: the retry names the
+    # offending number), and the deterministic template is the fallback.
+    move(RunState.REPORTING)
+    names = {c.concept_id: c.name for c in brief.concepts}
+    verbose_note = ""
+    attempts = 0
+    verbose_prose: str | None = None
+    if reporter_fn is not None and critic_llm:
+        reporter_payload = {
+            "brief": {
+                "market": brief.market,
+                "audience_description": brief.audience_description,
+                "business_goal": brief.business_goal,
+            },
+            "concepts": [
+                {
+                    "concept_id": r["concept_id"],
+                    "name": names.get(r["concept_id"], r["concept_id"]),
+                    "rank": r["rank"],
+                    "status": r["status"],
+                    "weighted_total": r["weighted_total"],
+                    "coverage": r["coverage"],
+                    "reason": r.get("reason"),
+                    "criterion_scores": r.get("criterion_scores", []),
+                }
+                for r in report["ranks"]
+            ],
+            "claims": [
+                {k: v for k, v in c.items() if k != "evidence_ids"}
+                for c in claims
+            ],
+            "critic_findings": findings,
+            "tie": tie,
+            "tiebreak": tiebreak_block,
+            "sensitivity": sensitivity,
+            "research": {
+                "mode": research_block.get("mode"),
+                "calls": research_block.get("calls"),
+                "evidence": research_block.get("evidence"),
+                "qloo_calls": research_block.get("qloo_calls"),
+            },
+            "limitations": report["limitations"],
+        }
+        allowed = _collect_allowed_numbers(reporter_payload)
+        allowed.add(100.0)
+        hint: str | None = None
+        for attempt in (1, 2):
+            attempts = attempt
+            try:
+                raw = _call_hook(reporter_fn, (reporter_payload,), hint)
+                prose = (
+                    raw.get("report")
+                    if isinstance(raw, dict)
+                    else str(raw)
+                )
+                prose = str(prose).strip()
+                if prose.startswith("```"):
+                    prose = prose.split("\n", 1)[-1]
+                if prose.endswith("```"):
+                    prose = prose.rsplit("```", 1)[0]
+                prose = prose.strip()
+                bad = _number_violations(prose, allowed)
+                if not prose:
+                    raise ValueError("reporter returned no prose")
+                if bad:
+                    raise _NumberGuardError([t for t, _ in bad])
+                verbose_prose = prose
+                break
+            except _NumberGuardError as exc:
+                hint = exc.hint
+                note(
+                    "verbose_report_guard",
+                    {
+                        "attempt": attempts,
+                        "guard_hint": hint[:400],
+                        "stage": "reporting",
+                    },
+                )
+            except Exception as exc:
+                hint = _repair_hint(exc)
+        if verbose_prose is not None:
+            verbose_note = (
+                "the number guard caught an invented number in the first draft"
+                if attempts == 2
+                else ""
+            )
+        else:
+            offending = ""
+            if hint:
+                offending = f"; last hint: {hint[:200]}"
+            limitations.append(
+                "verbose report: the reporter model's prose failed the number "
+                f"guard or validation twice{offending}; the deterministic "
+                "template was used"
+            )
+            # The report dict baked the limitations in before this stage ran.
+            report["limitations"] = sorted(set(limitations))
+        template_reason = (
+            None if verbose_prose is not None
+            else "the reporter model's prose could not be used safely"
+        )
+    else:
+        template_reason = (
+            "no LLM reporter is configured"
+            if reporter_fn is None
+            else "the critique did not complete; the reporter model only "
+            "writes after a completed critique"
+        )
+    llm_wrote = verbose_prose is not None
+    if verbose_prose is None:
+        verbose_prose = _template_verbose_report(brief, report)
+    report["verbose"] = {
+        "prose": verbose_prose,
+        # Did the model's prose reach the page? Verified BEFORE the template
+        # was substituted, so a guarded-out draft cannot be mislabelled.
+        "llm_written": llm_wrote,
+        "attempts": attempts,
+        "template_fallback": template_reason is not None,
+        "template_reason": template_reason,
+        "note": verbose_note,
+    }
+
     terminal = RunState.COMPLETED_WITH_LIMITATIONS if limitations else RunState.COMPLETED
     move(terminal)
     report["state"] = terminal.value

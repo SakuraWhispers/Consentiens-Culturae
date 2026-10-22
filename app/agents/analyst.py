@@ -27,6 +27,7 @@ from app.agents.prompts import (
     ANALYST_SYSTEM,
     CRITIC_SYSTEM,
     RESEARCHER_SYSTEM,
+    REPORTER_SYSTEM,
     REVISION_SYSTEM,
     TIEBREAK_SYSTEM,
 )
@@ -412,10 +413,44 @@ def compare_tied_llm(
     return AnalysisDraft(claims=claims, rejected=rejected, raw_head=_raw_head(parsed))
 
 
+def draft_report_llm(
+    api_key: str,
+    model: str,
+    payload: dict[str, Any],
+    timeout: float = 30.0,
+    client: httpx.Client | None = None,
+    base_url: str = DEFAULT_LLM_BASE_URL,
+    max_tokens: int | None = None,
+    reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
+) -> str:
+    """The verbose report (2026-10-22, Batch 3): prose, written only from the
+    computed payload. The coordinator's number guard judges it afterwards."""
+    parsed = complete_json(
+        api_key, model, REPORTER_SYSTEM, _with_hint(payload, repair_hint),
+        timeout, client, base_url, max_tokens, reasoning,
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
+    )
+    prose = parsed.get("report")
+    if not isinstance(prose, str) or not prose.strip():
+        raise ValueError("reporter output carried no prose")
+    prose = prose.strip()
+    # Strip a fenced wrapper the model may add around the prose itself.
+    if prose.startswith("```"):
+        prose = prose.split("\n", 1)[-1]
+    if prose.endswith("```"):
+        prose = prose.rsplit("```", 1)[0]
+    prose = prose.strip()
+    if not prose:
+        raise ValueError("reporter output was only a fence")
+    return prose
+
+
 __all__ = [
     "draft_plan_llm",
     "draft_claims_llm",
     "review_claims_llm",
     "revise_claims_llm",
     "compare_tied_llm",
+    "draft_report_llm",
 ]

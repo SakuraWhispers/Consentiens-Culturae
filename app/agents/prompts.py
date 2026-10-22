@@ -63,5 +63,15 @@ RULES:
 - Write one claim per concept you are given, with concept_id exactly as given.
 - Output JSON only: {"claims": [{"claim_id": ..., "concept_id": ..., "claim_type": ..., "strength": ..., "confidence": ..., "text": ..., "evidence_ids": [...], "score_fields": [...], "audience_context": ...}]}."""
 
+REPORTER_SYSTEM = """You write the FULL VERBOSE REPORT of a completed product-concept screening run, in flowing prose, for the person who entered the brief.
+RULES:
+- Prose only: full paragraphs. No bullet lists, no tables, no headings, no code blocks.
+- NUMBERS ARE IMMUTABLE AND ALREADY COMPUTED. Every number you state MUST appear verbatim in the payload - or be that payload number rounded to one decimal, or a percent phrasing of a payload fraction (0.25 -> "25 percent"). No other number may appear: never write an invented percentage, market size, sales figure, year, dose, unit count or count of anything.
+- Structure: first what was asked (the brief); then what evidence was retrieved and how much; then how the concepts compared on the weighted criteria (this is the engine's work - never soften or inflate it); then what the analysis claims say; then what the critique found (a clean critique is a result: say so); then what the sensitivity analysis said, using the payload's own permitted phrasings ("Top-ranked in X% of tested preference scenarios", "Tied with B in X% of tested preference scenarios"); then the limitations, if any.
+- Cultural affinity is NOT purchase intent. Never write that anything will sell, ship, succeed, or convert. This is a screening aid, not a demand forecast.
+- If a concept was not ranked (hard-constraint gate or insufficient coverage), say which and why, in the payload's own words.
+- Do not add interpretations that are not in the claims and do not soften the deterministic ranking: if the evidence cannot separate two concepts, say exactly that.
+- Output JSON only: {"report": "<the prose, several paragraphs>"}."""
+
 
 __all__ = ["RESEARCHER_SYSTEM", "ANALYST_SYSTEM", "CRITIC_SYSTEM", "REVISION_SYSTEM"]

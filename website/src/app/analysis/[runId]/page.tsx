@@ -276,6 +276,9 @@ function RunPage() {
               ...(report.tiebreak?.detected
                 ? [["tiebreak", "The tie-break attempt"]]
                 : []),
+              ...(report.verbose
+                ? [["verbose", "The full report in words"]]
+                : []),
               ["researcher", "1 · What the researcher did and found"],
               ["analyst", "2 · What the analyst analysed and found"],
               ["critique", "3 · What the critique criticised"],
@@ -421,6 +424,46 @@ function RunPage() {
             <p className="mt-4 font-serif text-sm text-mistslate">
               {report.tiebreak.note}
             </p>
+          </section>
+        )}
+
+        {/* The verbose report: the whole run told in words. Provenance is
+            shown honestly: who wrote it and why. */}
+        {report.verbose && (
+          <section
+            id="verbose"
+            className="rounded-2xl border border-mistline bg-creamcard p-7 shadow-sm"
+          >
+            <h3 className="font-serif text-3xl text-ink">
+              The full report in words
+            </h3>
+            <p className="mt-2 font-sans text-sm text-mistslate">
+              {report.verbose.llm_written ? (
+                <>
+                  Written by the reporter model and cleared by the deterministic
+                  number guard
+                  {report.verbose.attempts > 1
+                    ? ` (${report.verbose.attempts} attempts — an invented number was caught and the draft rewritten)`
+                    : ""}
+                  .
+                </>
+              ) : (
+                <>
+                  Written by the deterministic template
+                  {report.verbose.template_reason
+                    ? ` — ${report.verbose.template_reason}`
+                    : ""}
+                  .
+                </>
+              )}
+            </p>
+            <div className="mt-4 space-y-4">
+              {report.verbose.prose.split("\n\n").map((paragraph, i) => (
+                <p key={i} className="font-serif text-lg leading-relaxed text-ink">
+                  {paragraph}
+                </p>
+              ))}
+            </div>
           </section>
         )}
 

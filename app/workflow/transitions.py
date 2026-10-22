@@ -48,6 +48,17 @@ _ALLOWED: Mapping[RunState, frozenset[RunState]] = {
     ),
     RunState.ROBUSTNESS_ANALYSIS: frozenset(
         {
+            RunState.REPORTING,
+            RunState.COMPLETED,
+            RunState.COMPLETED_WITH_LIMITATIONS,
+            RunState.FAILED_RETRYABLE,
+        }
+    ),
+    # The verbose report stage (2026-10-22, Batch 3): after the sensitivity,
+    # the run is written up in words - by the reporter model when allowed, or
+    # by the deterministic template otherwise.
+    RunState.REPORTING: frozenset(
+        {
             RunState.COMPLETED,
             RunState.COMPLETED_WITH_LIMITATIONS,
             RunState.FAILED_RETRYABLE,
