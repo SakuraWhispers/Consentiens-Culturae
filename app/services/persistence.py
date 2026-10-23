@@ -414,12 +414,18 @@ def load_evidence_records(
 
     Used by the RESUME path: a half-finished run keeps its Qloo evidence, so
     a retry can re-run the LLM stages without spending Qloo quota again.
+
+    Rows that no longer validate (schema drift, a corrupt row) are NEVER
+    silently dropped: a row that cannot load would shrink the evidence set
+    behind the run's back, and the scores would change without anyone
+    knowing. The resume is refused with the count instead (audit 2026-10-23).
     """
     from app.schemas.evidence import EvidenceRecord
 
     with _session(engine) as s:
         rows = s.query(EvidenceRow).filter_by(run_id=run_id).all()
     grouped: dict[str, list[dict[str, Any]]] = {}
+    dropped = 0
     for row in rows:
         record = dict(row.evidence_json or {})
         record["evidence_id"] = row.evidence_id
@@ -428,12 +434,19 @@ def load_evidence_records(
         # (the table has no concept column; the id hash is not reversible).
         concept_id = record.pop("concept_id", None)
         if not concept_id:
+            dropped += 1
             continue
         try:
             model = EvidenceRecord(**record)
         except Exception:
+            dropped += 1
             continue
         grouped.setdefault(concept_id, []).append(model.model_dump())
+    if dropped:
+        raise ValueError(
+            f"{dropped} stored evidence row(s) of run {run_id} failed to load; "
+            "refusing to resume with silently missing evidence"
+        )
     return grouped
 
 

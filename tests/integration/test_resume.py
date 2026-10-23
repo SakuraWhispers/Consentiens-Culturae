@@ -104,6 +104,43 @@ def test_a_malformed_client_run_id_is_rejected(tmp_path: Path) -> None:
     assert resp.status_code == 422
 
 
+def test_resume_refuses_when_evidence_rows_fail_to_load(tmp_path: Path) -> None:
+    """Audit fix (2026-10-23): an evidence row that no longer validates used
+    to be silently skipped, so the run resumed on FEWER records and the
+    scores changed without anyone knowing. Now the resume is refused with
+    the count, and the run row is left exactly as it was."""
+    from app.services.persistence import (
+        add_evidence_records,
+        create_run,
+        get_engine,
+        init_db,
+        update_run_state,
+    )
+
+    db_url = f"sqlite:///{tmp_path}/resume_test.db"
+    engine = get_engine(db_url)
+    init_db(engine)
+    run_id = create_run(
+        engine,
+        input_json=_brief_dict(),
+        scoring_version="v0.1",
+        workflow_version="w0.1-g2",
+    )
+    update_run_state(engine, run_id, "SCORING")
+    add_evidence_records(
+        engine,
+        run_id,
+        [{"evidence_id": "corrupt-row", "concept_id": "A",
+          "coverage_status": "not-a-status"}],  # invalid literal -> unloadable
+    )
+    with _client(tmp_path) as client:  # the app points at the SAME db file
+        response = client.post(f"/api/decision-runs/{run_id}/resume")
+    assert response.status_code == 422, response.text
+    assert "1 stored evidence row" in response.json()["detail"]
+    bundle = get_run_bundle(engine, run_id)
+    assert bundle["run"]["state"] == "SCORING"
+
+
 def test_resume_reuses_the_stored_evidence_and_finishes_the_run(tmp_path: Path) -> None:
     reset_run_limiter()
     client = _client(tmp_path)
