@@ -1428,7 +1428,11 @@ def run_decision(
             "rule_findings": sum(1 for f in findings if f.get("source") == "rules"),
             # The scope of the critique (2026-10-22): "0 findings" must read as
             # "it ran and found nothing", not as "it never ran".
-            "claims_reviewed": len(claims),
+            # The count matches what was actually reviewed: the LLM critic
+            # also receives the tie-break claims (its call above), while the
+            # deterministic fallback sees only the base claims.
+            "claims_reviewed": len(claims)
+            + (len(tiebreak_claims) if critic_llm else 0),
             "evidence_records_available": sum(available_by_concept.values()),
             "issue_codes": list(ISSUE_CODES),
         },

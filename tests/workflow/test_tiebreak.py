@@ -127,6 +127,10 @@ def test_the_focused_comparison_is_recorded_and_reviewed_by_the_critique() -> No
         any(c.get("claim_id", "").startswith("tiebreak-") for c in claims)
         for claims in seen_claims
     )
+    # And the reported review scope says so: it must count exactly what the
+    # critic actually received (base claims + tie-break), not just the base
+    # claims (audit 2026-10-23).
+    assert out["report"]["critic"]["claims_reviewed"] == len(seen_claims[0])
 
 
 def test_the_comparison_may_cite_the_new_tie_break_evidence() -> None:
