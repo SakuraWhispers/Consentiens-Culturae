@@ -174,6 +174,22 @@ def test_cors_preflight_allows_next_dev_origin(tmp_path: Path) -> None:
     assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
+def test_cors_preflight_allows_delete(tmp_path: Path) -> None:
+    """Audit fix (2026-10-23): the 'Start fresh' button sends DELETE. With the
+    method missing from the CORS allow-list the browser blocked the preflight
+    whenever the frontend is a separate origin (localhost dev or Vercel+API)."""
+    client = _client(tmp_path)
+    resp = client.options(
+        "/api/decision-runs",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "DELETE",
+        },
+    )
+    assert resp.status_code == 200
+    assert "DELETE" in resp.headers.get("access-control-allow-methods", "")
+
+
 def test_cors_blocks_unlisted_origin(tmp_path: Path) -> None:
     client = _client(tmp_path)
     resp = client.options(

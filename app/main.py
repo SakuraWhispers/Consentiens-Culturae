@@ -58,7 +58,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["*"],
         # Retry-After is not a CORS-safelisted response header: without this
         # the browser hides it and the UI cannot tell the user how long to
