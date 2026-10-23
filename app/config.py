@@ -38,7 +38,6 @@ class Settings:
     database_url: str = "sqlite:///./consentiens_culturae.db"
     qloo_base_url: str = "https://hackathon.api.qloo.com"
     qloo_timeout_seconds: float = 10.0
-    qloo_max_calls_per_run: int = 10
     insufficient_coverage_threshold: float = 0.5
     # G3 agent roles: flag-gated, deterministic fallback is the default.
     llm_enabled: bool = False
@@ -66,7 +65,6 @@ class Settings:
                 or "https://hackathon.api.qloo.com"
             ).rstrip("/"),
             qloo_timeout_seconds=float(_env("QLOO_TIMEOUT_SECONDS", "10") or 10),
-            qloo_max_calls_per_run=int(_env("QLOO_MAX_CALLS_PER_RUN", "10") or 10),
             insufficient_coverage_threshold=float(
                 _env("INSUFFICIENT_COVERAGE_THRESHOLD", "0.5") or 0.5
             ),
