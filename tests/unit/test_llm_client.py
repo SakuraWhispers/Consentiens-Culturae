@@ -201,6 +201,18 @@ def test_fenced_array_after_thought_bridges() -> None:
         assert bridged == {"claims": [{"ok": 1}]}
 
 
+def test_oversized_payload_raises_before_any_http_call() -> None:
+    """Audit fix (2026-10-23): the user payload used to be SILENTLY cut
+    mid-JSON, so the model could reason on half the evidence with
+    no limitation recorded. Over budget now raises BEFORE any request: zero
+    tokens spent, and the coordinator falls back to the deterministic path."""
+    transport, urls = _transport_capture()
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(AgentLLMError, match="prompt budget"):
+            complete_json("k", "m", "sys", {"blob": "x" * 26000}, client=client)
+    assert urls == [], "an over-budget payload must never reach the provider"
+
+
 def test_no_leaderboard_headers_sent() -> None:
     # Attribution headers (HTTP-Referer / X-Title) would count us for the
     # OpenRouter leaderboards; the human asked to stay off them.

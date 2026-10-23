@@ -20,6 +20,12 @@ class AgentLLMError(RuntimeError):
 
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
+# The user-payload prompt budget (chars). An oversized payload used to be
+# SILENTLY cut mid-JSON, so the model reasoned on half the evidence; over
+# budget now raises instead - the coordinator records the limitation and
+# falls back to the deterministic path, and no tokens are spent.
+_PROMPT_BUDGET_CHARS = 25000
+
 
 def _strip_thought_block(content: str) -> str:
     """Google-family Gemma streams reasoning inline inside <thought>...</thought>
@@ -71,13 +77,20 @@ def complete_json(
     """
     own_client = client is None
     url = f"{base_url.rstrip('/')}/chat/completions"
+    user_json = json.dumps(user_payload)
+    if len(user_json) > _PROMPT_BUDGET_CHARS:
+        raise AgentLLMError(
+            f"user payload is {len(user_json)} chars, over the "
+            f"{_PROMPT_BUDGET_CHARS}-char prompt budget; truncating silently "
+            "would make the model reason on incomplete evidence"
+        )
     request_body: dict[str, Any] = {
         "model": model,
         "temperature": temperature,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(user_payload)[:12000]},
+            {"role": "user", "content": user_json},
         ],
     }
     if max_tokens is not None:
