@@ -198,7 +198,17 @@ def create_run(
     try:
         _with_db_retry(_op)
     except IntegrityError:
-        return run_id
+        # The id exists: a retry of the SAME brief reuses the row (idempotent
+        # by deterministic ids); a DIFFERENT brief reusing the id would mix
+        # two runs' evidence into one run and overwrite the report - refuse.
+        try:
+            stored = get_run_input(engine, run_id)
+        except ValueError:
+            return run_id  # raced with a delete; nothing to compare
+        if stored != input_json:
+            raise ValueError(
+                f"run_id {run_id} already exists with a different brief"
+            ) from None
     return run_id
 
 

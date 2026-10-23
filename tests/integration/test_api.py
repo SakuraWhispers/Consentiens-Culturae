@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -64,6 +65,28 @@ def _client(tmp_path: Path) -> TestClient:
         fixtures_dir=FIXTURES_DIR,
     )
     return TestClient(app)
+
+
+def test_duplicate_run_id_with_a_different_brief_is_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Audit fix (2026-10-23): re-POSTing an existing run_id with a changed
+    brief must be refused - the first run's stored report must survive
+    untouched (no silent overwrite, no mixed evidence)."""
+    monkeypatch.setenv("RUN_MIN_GAP_SECONDS", "0")  # two back-to-back POSTs
+    reset_run_limiter()
+    run_id = uuid.uuid4().hex
+    with _client(tmp_path) as client:
+        first = client.post("/api/decision-runs", json=_brief_dict() | {"run_id": run_id})
+        assert first.status_code == 200, first.text
+        before = client.get(f"/api/decision-runs/{run_id}").json()
+        changed = _brief_dict() | {"run_id": run_id, "market": "Porto, Portugal"}
+        second = client.post("/api/decision-runs", json=changed)
+        assert second.status_code == 422, second.text
+        assert "different brief" in second.json()["detail"]
+        after = client.get(f"/api/decision-runs/{run_id}").json()
+    assert after["run"]["input_json"]["market"] == before["run"]["input_json"]["market"]
+    assert after["run"]["final_report_json"] == before["run"]["final_report_json"]
 
 
 def test_cannot_check_constraint_rejects_with_422_detail(tmp_path: Path) -> None:

@@ -44,7 +44,8 @@ class RunRequest(DecisionBrief):
 
     The client may generate the id so it can watch the run's progress (and
     find it again) before the pipeline returns. The server validates the
-    format and refuses an id that already exists.
+    format and refuses an id that already exists with a different brief
+    (resubmitting the identical brief reuses the run row instead).
     """
 
     run_id: str | None = None

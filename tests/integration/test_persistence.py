@@ -67,3 +67,32 @@ def test_run_lifecycle_roundtrip(engine) -> None:
 def test_create_run_rejects_empty_input(engine) -> None:
     with pytest.raises(ValueError):
         create_run(engine, input_json={}, scoring_version="v0.1", workflow_version="w0.1")
+
+
+def test_create_run_refuses_a_foreign_brief_on_the_same_run_id(engine) -> None:
+    """Audit fix (2026-10-23): an existing run_id reused with a DIFFERENT brief
+    would mix two runs' evidence and overwrite the report - refused. The
+    identical brief stays an idempotent retry (row reused, no error)."""
+    input_a: dict[str, object] = {"brief": "mock-a"}
+    input_b: dict[str, object] = {"brief": "mock-b"}
+    first = create_run(
+        engine, input_json=input_a, scoring_version="v0.1", workflow_version="w0.1"
+    )
+    assert (
+        create_run(
+            engine,
+            input_json=input_a,
+            scoring_version="v0.1",
+            workflow_version="w0.1",
+            run_id=first,
+        )
+        == first
+    ), "the same brief reusing its id is a retry, not a refusal"
+    with pytest.raises(ValueError, match="different brief"):
+        create_run(
+            engine,
+            input_json=input_b,
+            scoring_version="v0.1",
+            workflow_version="w0.1",
+            run_id=first,
+        )
