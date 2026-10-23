@@ -116,6 +116,34 @@ def test_attribute_suggester_needs_llm_mode(tmp_path: Path) -> None:
     assert "LLM_ENABLED" in response.json()["detail"]
 
 
+def test_suggester_rate_limit_stops_repeated_clicks(tmp_path: Path, monkeypatch) -> None:
+    """Audit fix (2026-10-23): the suggest button spends from the SAME
+    free-model budget as runs, so repeated clicking must hit a cap, not
+    drain the day's quota."""
+    monkeypatch.setenv("LLM_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "google")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-suggester-only")
+    monkeypatch.setenv("SUGGESTS_PER_DAY", "2")
+    reset_run_limiter()  # rebuild both singletons from the env above
+
+    def fake_suggest(api_key, model, concepts, target_attributes=None, **kwargs):
+        return [{"concept_id": concepts[0]["concept_id"], "attributes": []}], []
+
+    monkeypatch.setattr("app.api.routes_runs.suggest_attributes_llm", fake_suggest)
+    payload = {
+        "concepts": [
+            {"concept_id": "A", "name": "Mock Studio Notebooks", "description": "Recycled notebook", "attributes": {}}
+        ],
+        "target_attributes": ["material"],
+    }
+    with _client(tmp_path) as client:
+        for expected in (200, 200, 429):
+            response = client.post("/api/attributes/suggest", json=payload)
+            assert response.status_code == expected, response.text
+        assert "Retry-After" in response.headers
+    reset_run_limiter()
+
+
 def test_attribute_suggester_returns_sanitized_proposals(tmp_path: Path, monkeypatch) -> None:
     def fake_suggest(api_key, model, concepts, target_attributes=None, **kwargs):
         assert target_attributes == ["material"]

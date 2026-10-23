@@ -23,7 +23,7 @@ from app.services.persistence import (
     get_run_input,
     get_run_state,
 )
-from app.services.rate_limiter import RateLimitExceeded, get_run_limiter
+from app.services.rate_limiter import RateLimitExceeded, get_run_limiter, get_suggest_limiter
 from app.agents.analyst import suggest_attributes_llm
 from app.workflow.coordinator import preflight_constraint_check, run_decision
 from app.workflow.states import TERMINAL_STATES, RunState
@@ -174,6 +174,18 @@ def suggest_attributes(
         raise HTTPException(
             status_code=503, detail="no API key configured for the suggester"
         )
+    # The suggester spends from the same free-model budget as runs: a stuck
+    # button or a bored judge must not drain the day's quota. Acquired only
+    # after the no-spend guards so a 503 never counts as a spend.
+    limiter = get_suggest_limiter()
+    try:
+        limiter.acquire()
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"the suggester is rate-limited; retry after {exc.retry_after_seconds}s",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
     try:
         kept, rejected = suggest_attributes_llm(
             pool["api_key"],
@@ -189,6 +201,8 @@ def suggest_attributes(
         raise HTTPException(
             status_code=502, detail=f"suggester failed: {str(exc)[:200]}"
         ) from exc
+    finally:
+        limiter.release()
     return {"suggestions": kept, "rejected": rejected}
 
 

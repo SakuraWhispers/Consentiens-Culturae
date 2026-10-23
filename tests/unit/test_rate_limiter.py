@@ -67,3 +67,30 @@ def test_reset_run_limiter_drops_global(monkeypatch) -> None:
     b = rl.get_run_limiter()
     assert a is not b
     reset_run_limiter()
+
+
+def test_suggest_limiter_has_its_own_day_cap(monkeypatch) -> None:
+    from app.services import rate_limiter as rl
+
+    monkeypatch.setenv("SUGGESTS_PER_DAY", "2")
+    reset_run_limiter()
+    suggest = rl.get_suggest_limiter()
+    for _ in range(2):
+        suggest.acquire()
+        suggest.release()
+    with pytest.raises(RateLimitExceeded):
+        suggest.acquire()
+    reset_run_limiter()
+
+
+def test_suggest_limiter_does_not_consume_run_slots() -> None:
+    from app.services import rate_limiter as rl
+
+    reset_run_limiter()
+    suggest = rl.get_suggest_limiter()
+    suggest.acquire()  # a suggester call is in flight
+    run = rl.get_run_limiter()
+    run.acquire()  # ...and the run limiter must not feel it
+    run.release()
+    suggest.release()
+    reset_run_limiter()

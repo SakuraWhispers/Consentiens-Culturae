@@ -5,7 +5,9 @@ consume up to 10 Qloo calls and up to 9 LLM attempts, and the demo must not
 allow parallel or rapid-fire runs. Enforcement: process-global (single-process
 uvicorn), one run at a time, a configurable minimum gap between consecutive
 run starts, and a per-UTC-day cap. Rejections surface as HTTP 429 with a
-Retry-After header — never a silent drop.
+Retry-After header — never a silent drop. A second process-global instance
+caps the attribute suggester (the same free-model budget, spent by a button
+instead of a run).
 
 Limits come from env: RUN_MIN_GAP_SECONDS (default 30), RUNS_PER_DAY
 (default 50). Both floor at sane minimums; a value of "0" disables the cap
@@ -107,6 +109,7 @@ class RunLimiter:
 
 
 _LIMITER: RunLimiter | None = None
+_SUGGEST_LIMITER: RunLimiter | None = None
 _LIMITER_LOCK = threading.Lock()
 
 
@@ -119,16 +122,39 @@ def get_run_limiter() -> RunLimiter:
         return _LIMITER
 
 
+def suggest_limiter_from_env() -> RunLimiter:
+    """The suggester spends from the SAME free-model budget as runs (the
+    suggest endpoint is open to repeated clicks, so it needs its own cap):
+    no gap (one short call at a time is harmless), a day cap of its own."""
+    raw = os.environ.get("SUGGESTS_PER_DAY", "30")
+    try:
+        per_day = int(float(raw))
+    except ValueError:
+        per_day = 30
+    return RunLimiter(min_gap_seconds=0.0, max_per_day=per_day)
+
+
+def get_suggest_limiter() -> RunLimiter:
+    global _SUGGEST_LIMITER
+    with _LIMITER_LOCK:
+        if _SUGGEST_LIMITER is None:
+            _SUGGEST_LIMITER = suggest_limiter_from_env()
+        return _SUGGEST_LIMITER
+
+
 def reset_run_limiter() -> None:
-    """Test hook: drop the global instance (never used in production paths)."""
-    global _LIMITER
+    """Test hook: drop the global instances (never used in production paths)."""
+    global _LIMITER, _SUGGEST_LIMITER
     with _LIMITER_LOCK:
         _LIMITER = None
+        _SUGGEST_LIMITER = None
 
 
 __all__ = [
     "RateLimitExceeded",
     "RunLimiter",
     "get_run_limiter",
+    "get_suggest_limiter",
+    "suggest_limiter_from_env",
     "reset_run_limiter",
 ]
