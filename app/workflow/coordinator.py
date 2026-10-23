@@ -1012,6 +1012,11 @@ def run_decision(
                         for r in recs
                     ],
                 )
+        # The tie-break's new evidence is real, stored evidence: the analyst,
+        # critic, and tie-break salvage must accept its ids. Without this the
+        # allow-list (built before the tie-break existed) rejects every claim
+        # citing the new records - the comparison could never cite its input.
+        known_ids |= {r.evidence_id for recs in records_by_concept.values() for r in recs}
         # Recompute the scores with the extra evidence.
         raw_values, diagnostics = extract_raw_values(records_by_concept)
         scores = score_concepts(

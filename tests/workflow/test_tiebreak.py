@@ -129,6 +129,74 @@ def test_the_focused_comparison_is_recorded_and_reviewed_by_the_critique() -> No
     )
 
 
+def test_the_comparison_may_cite_the_new_tie_break_evidence() -> None:
+    """Regression (2026-10-23 audit): the claim allow-list was built BEFORE
+    the tie-break added new evidence, so a comparison citing one of the new
+    evidence ids was rejected ('rejected by validation') and the focused
+    comparison stayed empty exactly when it had new evidence to cite."""
+
+    class _SourceFindingOneNewEntity:
+        """The fixture, except every tie-break search also finds one extra,
+        previously unseen entity. Each tied concept gets the SAME extra
+        evidence (symmetric), so the tie survives and the comparison runs."""
+
+        def __init__(self) -> None:
+            self._inner = FixtureSource(FIXTURES_DIR)
+
+        def load(self, endpoint: str, params: dict[str, str]):
+            payload = self._inner.load(endpoint, params)
+            query = params.get("query", "")
+            if endpoint == "search" and query.endswith("US, online and indie bookstores"):
+                entities = payload.payload["results"]["entities"]
+                entities.append(
+                    {
+                        "name": "Mock Fresh Envelope Co.",
+                        "entity_id": "99999999-AAAA-BBBB-CCCC-DDDDDDDDDDDD",
+                        "type": "urn:entity",
+                        "subtype": "urn:entity:brand",
+                        "properties": {"popularity": 0.4242},
+                        "tags": [
+                            {
+                                "id": "urn:tag:keyword:mock:fresh",
+                                "name": "Fresh",
+                                "type": "urn:tag:keyword:mock",
+                            }
+                        ],
+                    }
+                )
+            return payload
+
+    def tiebreak_fn(tied, evidence_summary, weights, before, after):
+        claims = []
+        for entry in tied:
+            cid = entry["concept_id"]
+            claim = _tiebreak_claim(cid)
+            # The LAST id in the summary is the tie-break's own new record.
+            claim["evidence_ids"] = [evidence_summary[cid]["evidence_ids"][-1]]
+            claims.append(claim)
+        return claims
+
+    def critic(claims, score_summary, known_ids):
+        return []
+
+    eng = _engine()
+    out = run_decision(
+        eng, _tied_brief(), _SourceFindingOneNewEntity(),
+        tiebreak_fn=tiebreak_fn, critic_fn=critic,
+    )
+    rep = out["report"]
+    tb = rep["tiebreak"]
+    assert tb["detected"] is True
+    assert tb["new_entities"] >= 1, "the wrapped search must find something new"
+    assert tb["resolved"] is False, "symmetric extra evidence keeps the tie"
+    assert len(tb["comparison"]) == len(tb["concepts"]), (
+        "the comparison must survive when it cites the new evidence ids"
+    )
+    assert not any("tie-break comparison" in lim for lim in rep["limitations"]), (
+        "citing new (real, stored) evidence must not be rejected"
+    )
+
+
 def test_without_a_tie_nothing_extra_happens() -> None:
     def tiebreak_fn(tied, evidence_summary, weights, before, after):
         raise AssertionError("the tie-break must not run without a tie")
