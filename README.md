@@ -54,6 +54,21 @@ cd website; npm run build                       # production build of the site
    evidence IDs; a critic challenges the claims; flagged wording is revised.
 4. **Sensitivity** — up to 1,000 seeded alternative weightings show how
    stable the ranking is. The same brief always produces the same answer.
+5. **Attribute suggester** (`POST /api/attributes/suggest`, LLM mode only) —
+   before a run, a cheap assist model proposes attribute values grounded in
+   each concept's description. Proposals are SHOW-ONLY: you copy what you
+   agree with; nothing is auto-applied and the gate stays deterministic code
+   (set `LLM_SUGGESTER_MODEL` / `LLM_SUGGESTER_BASE_URL` to point it at a
+   smaller model; defaults fall back to the main one).
+
+## Hard-constraint notes
+
+- A constraint only means something against the attributes you typed for each
+  concept. A constraint naming an attribute no concept declares stops the
+  brief at submit (HTTP 422 naming the concepts) — no spend, no surprise.
+- "Cannot be checked" is never treated as a violation: an unverifiable
+  constraint still ranks the concept and the results page says so loudly; a
+  genuinely violated constraint still blocks it as INFEASIBLE.
 
 ## Honesty rules (see `AGENTS.md`)
 

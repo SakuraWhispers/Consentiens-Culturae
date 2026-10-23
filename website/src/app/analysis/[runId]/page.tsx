@@ -223,6 +223,9 @@ function RunPage() {
   const winner = report.ranks.find((r) => r.concept_id === report.winner);
   const ranked = report.ranks.filter((r) => r.status !== "INFEASIBLE");
   const infeasible = report.ranks.filter((r) => r.status === "INFEASIBLE");
+  // A constraint that could not be checked (a concept does not declare the
+  // attribute) never blocks (2026-10-23) - but the run says so out loud.
+  const unverified = report.ranks.filter((r) => r.constraint_notice);
   const conceptName = (id: string | null) =>
     (id && bundle.run.input_json.concepts.find((c) => c.concept_id === id)?.name) ||
     id ||
@@ -485,6 +488,26 @@ function RunPage() {
               </div>
             ))}
           </div>
+          {unverified.length > 0 && (
+            <div className="mt-3 rounded-xl border border-[#b5563a]/60 bg-[#b5563a]/10 p-4">
+              <p className="font-serif text-lg text-ink">
+                Constraint check could not be verified — these concepts still
+                rank, flagged:
+              </p>
+              <ul className="mt-2 list-disc pl-6">
+                {unverified.map((r) => (
+                  <li key={r.concept_id} className="font-serif text-base text-ink/85">
+                    {conceptName(r.concept_id)}: {r.constraint_notice}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 font-serif text-sm text-mistslate">
+                No code may invent an attribute value, so the check was skipped
+                rather than guessed. An INFEASIBLE verdict would have required
+                the check to actually run.
+              </p>
+            </div>
+          )}
           {infeasible.length > 0 && (
             <div className="mt-3 rounded-xl border border-mauve/50 bg-mauve/15 p-4">
               <p className="font-serif text-lg text-ink">

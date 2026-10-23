@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.integrations.qloo_adapter import FixtureSource
 from app.services.persistence import get_engine, init_db
 from app.workflow.coordinator import run_decision

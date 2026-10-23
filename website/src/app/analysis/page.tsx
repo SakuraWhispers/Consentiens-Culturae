@@ -21,6 +21,12 @@ import {
 } from "@/lib/attributes";
 import { CRITERIA } from "@/lib/criteria";
 import { squeezeWeights, Weights } from "@/lib/weights";
+import {
+  AttributeSuggestion,
+  suggestAttributes,
+} from "@/lib/api";
+
+const CONCEPT_IDS = ["A", "B", "C"] as const;
 
 const ACCENTS = ["#a6c3d8", "#292b43", "#baa2c5"] as const;
 
@@ -74,14 +80,47 @@ function ConceptCard({
   draft,
   onChange,
   valueHints,
+  targetAttributes,
 }: {
   index: number;
   draft: ConceptDraft;
   onChange: (d: ConceptDraft) => void;
   valueHints: string[];
+  targetAttributes: string[];
 }) {
   const prepared = draft.name.trim() !== "" && draft.description.trim() !== "";
   const listId = `concept-attr-values-${index}`;
+  // The attribute suggester (2026-10-23): SHOW-ONLY proposals grounded in
+  // this concept's own description. Nothing is auto-applied - the user
+  // copies what they agree with, and the constraint gate stays code.
+  const conceptId = CONCEPT_IDS[index];
+  const [suggestion, setSuggestion] = useState<AttributeSuggestion[] | null>(
+    null
+  );
+  const [suggestState, setSuggestState] = useState<
+    "idle" | "loading" | "done" | "error"
+  >("idle");
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+
+  async function askForSuggestions() {
+    setSuggestState("loading");
+    try {
+      const out = await suggestAttributes(
+        {
+          concept_id: conceptId,
+          name: draft.name.trim(),
+          description: draft.description.trim(),
+        },
+        targetAttributes
+      );
+      const mine = out.find((s) => s.concept_id === conceptId);
+      setSuggestion(mine ? mine.attributes : []);
+      setSuggestState("done");
+    } catch (e) {
+      setSuggestError(e instanceof Error ? e.message : String(e));
+      setSuggestState("error");
+    }
+  }
   return (
     <div className="w-full">
       <p className="font-serif text-xl text-ink">Concept {index + 1}</p>
@@ -145,6 +184,53 @@ function ConceptCard({
               ))}
             </div>
           </div>
+          {/* Suggester: visible proposals, zero auto-apply. */}
+          <div className="mt-2">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                disabled={draft.description.trim() === "" || suggestState === "loading"}
+                onClick={askForSuggestions}
+                className="rounded-md border border-royal/60 px-2 py-1 font-serif text-sm text-royal enabled:hover:bg-royal/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {suggestState === "loading" ? "Asking…" : "Suggest attributes"}
+              </button>
+              <span className="font-serif text-xs text-mistslate">
+                proposals only — copy what you agree with
+              </span>
+            </div>
+            {suggestState === "done" && suggestion && (
+              <div className="mt-1.5 rounded-md bg-cream px-2 py-1.5">
+                {suggestion.length === 0 ? (
+                  <p className="font-serif text-sm text-mistslate">
+                    The assist model found nothing in this description it could
+                    attribute with confidence.
+                  </p>
+                ) : (
+                  <ul className="space-y-1 font-serif text-sm text-ink">
+                    {suggestion.map((s) => (
+                      <li key={`${s.attribute}-${s.value}`}>
+                        <span className="text-ink/80">
+                          {(ATTRIBUTE_LABELS as Record<string, string>)[s.attribute] ??
+                            s.attribute}
+                        </span>{" "}
+                        = <span className="font-medium">{s.value}</span>{" "}
+                        <em className="text-mistslate">({s.basis})</em>
+                        {s.quote ? (
+                          <span className="text-mistslate"> — “{s.quote}”</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {suggestState === "error" && (
+              <p className="mt-1.5 font-serif text-sm text-[#b5563a]">
+                {suggestError}
+              </p>
+            )}
+          </div>
         </div>
       </div>
       <p
@@ -180,8 +266,10 @@ function ConstraintsEditor({
       </button>
       <p className="mt-1 font-serif text-base text-mistslate">
         Up to 3 attribute/value checks a concept must pass to rank at all
-        (feasibility gate C4). A concept with no such attribute — or a
-        different value — is not ranked, and the results page says why.
+        (feasibility gate C4). A concept whose value differs is not ranked, and
+        the results page says why. A constraint naming an attribute a concept
+        does not declare stops the run before it starts — the form warns you,
+        and the suggester can propose the attribute for you to confirm.
       </p>
       {open && (
         <div className="mt-3 space-y-2">
@@ -296,13 +384,33 @@ export default function AnalysisPage() {
     [weights]
   );
 
+  // Pre-flight parity with the backend (2026-10-23): a constraint whose
+  // attribute a concept does not declare stops the run before it starts.
+  const constraintProblems = useMemo(
+    () =>
+      constraints
+        .filter((c) => c.attribute.trim() && c.value.trim())
+        .flatMap((c) => {
+          const missing = concepts
+            .map((d, i) => ({
+              who: `Concept ${i + 1} (${CONCEPT_IDS[i]})`,
+              has: (d.attributes[c.attribute.trim()] ?? "").trim() !== "",
+            }))
+            .filter((x) => !x.has)
+            .map((x) => x.who);
+          return missing.length ? [{ attribute: c.attribute.trim(), who: missing.join(", ") }] : [];
+        }),
+    [constraints, concepts]
+  );
+
   const briefValid =
     preparedCount === 3 &&
     market.trim() !== "" &&
     audience.trim().length >= 3 &&
     goal.trim().length >= 3 &&
     total === 100 &&
-    constraints.every((c) => c.attribute.trim() && c.value.trim());
+    constraints.every((c) => c.attribute.trim() && c.value.trim()) &&
+    constraintProblems.length === 0;
 
   // The values the concept cards already carry, offered to the constraints
   // (and vice versa) so both sides use the IDENTICAL string — the backend
@@ -523,6 +631,9 @@ export default function AnalysisPage() {
                 index={i}
                 draft={draft}
                 valueHints={constraintValues}
+                targetAttributes={constraints
+                  .map((c) => c.attribute.trim())
+                  .filter((v) => v !== "")}
                 onChange={(d) => {
                   const next = [...concepts];
                   next[i] = d;
@@ -582,6 +693,22 @@ export default function AnalysisPage() {
           >
             {phase === "running" ? "Running analysis…" : "Run analysis"}
           </button>
+
+          {constraintProblems.length > 0 && (
+            <div className="mt-3 rounded-lg border border-[#b5563a]/60 bg-[#b5563a]/10 px-4 py-3">
+              {constraintProblems.map((p) => (
+                <p
+                  key={p.attribute}
+                  className="font-serif text-base text-ink"
+                >
+                  Hard constraint “{p.attribute}” could never be checked:{" "}
+                  {p.who} {p.who.includes(",") ? "do" : "does"} not declare this
+                  attribute. Declare it on every concept (or ask the suggester)
+                  or remove the constraint.
+                </p>
+              ))}
+            </div>
+          )}
 
           {phase === "running" && liveState && (
             <p className="mt-3 rounded-md border border-mistline bg-cream px-3 py-2 font-serif text-base text-ink">
