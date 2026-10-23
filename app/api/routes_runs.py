@@ -15,7 +15,7 @@ from sqlalchemy.exc import (
 
 from app.config import Settings
 from app.integrations.qloo_adapter import EvidenceSource
-from app.schemas.brief import DecisionBrief
+from app.schemas.brief import AttributeSuggestionRequest, DecisionBrief
 from app.services.persistence import (
     create_run,
     delete_run,
@@ -24,7 +24,8 @@ from app.services.persistence import (
     get_run_state,
 )
 from app.services.rate_limiter import RateLimitExceeded, get_run_limiter
-from app.workflow.coordinator import run_decision
+from app.agents.analyst import suggest_attributes_llm
+from app.workflow.coordinator import preflight_constraint_check, run_decision
 from app.workflow.states import TERMINAL_STATES, RunState
 
 router = APIRouter()
@@ -114,6 +115,9 @@ def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             raise
         try:
+            # Pre-flight (2026-10-23): name every constraint that could never
+            # be checked BEFORE the run row exists or any call is paid for.
+            preflight_constraint_check(brief)
             # The run row exists BEFORE the pipeline starts, so the client
             # (which may know the id already) can follow its progress and
             # find it again if the request dies.
@@ -145,6 +149,46 @@ def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str
             raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
+
+
+@router.post("/attributes/suggest")
+def suggest_attributes(
+    request: AttributeSuggestionRequest, deps: RunDeps = Depends(get_deps)
+) -> dict[str, Any]:
+    """Cheap pre-run assist (2026-10-23): propose attribute values grounded in
+    each concept's description. The user copies what they agree with; nothing
+    is auto-applied and the constraint gate stays deterministic code. Not
+    run-limited (one short call, no Qloo, no run row), but LLM-mode only -
+    a fixture-mode service must not fake model suggestions."""
+    settings = Settings.from_env()
+    if not settings.llm_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="the attribute suggester needs LLM mode (LLM_ENABLED=true)",
+        )
+    from app.services.llm_hooks import resolve_pools
+
+    pool = resolve_pools(settings)["suggester"]
+    if not pool["api_key"]:
+        raise HTTPException(
+            status_code=503, detail="no API key configured for the suggester"
+        )
+    try:
+        kept, rejected = suggest_attributes_llm(
+            pool["api_key"],
+            pool["model"],
+            [c.model_dump() for c in request.concepts],
+            [a.strip()[:40] for a in request.target_attributes if a.strip()],
+            timeout=settings.llm_timeout_seconds,
+            base_url=pool["base_url"],
+            max_tokens=pool["gen"]["max_tokens"],
+            reasoning=pool["gen"].get("reasoning"),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"suggester failed: {str(exc)[:200]}"
+        ) from exc
+    return {"suggestions": kept, "rejected": rejected}
 
 
 @router.post("/decision-runs/{run_id}/resume")

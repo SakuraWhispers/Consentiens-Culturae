@@ -103,6 +103,56 @@ class TestScoring:
         assert "price_band" in by_id["A"].infeasible_reason
         assert by_id["C"].rank == 1 and by_id["B"].rank == 2
 
+    def test_uncheckable_constraint_ranks_with_a_notice_not_infeasible(self):
+        # The 2026-10-23 bug the human hit: a MISSING attribute is not a
+        # VIOLATED constraint. Code cannot invent the fact, but the concept
+        # still ranks - with a loud, per-concept notice.
+        results = score_concepts(
+            concept_ids=["A", "B", "C"],
+            weights=weights(),
+            raw_values=raw_values(),
+            hard_constraints=[
+                HardConstraint(attribute="material", value="recycled", note=None)
+            ],
+            concept_attributes={
+                "A": {},  # never declared -> cannot be checked
+                "B": {"material": "recycled"},
+                "C": {"material": "recycled"},
+            },
+            scoring_version="v0.1-test",
+        )
+        by_id = {r.concept_id: r for r in results}
+        assert by_id["A"].status == "RANKED"
+        assert by_id["A"].rank is not None
+        assert by_id["A"].infeasible_reason is None
+        notice = by_id["A"].constraint_notice
+        assert notice is not None and "material" in notice
+        # The checkable concepts are flagged clean, not noticed.
+        assert by_id["B"].constraint_notice is None
+        assert by_id["C"].constraint_notice is None
+
+    def test_a_violation_dominates_a_missing_attribute(self):
+        # One violated constraint blocks even when another cannot be checked.
+        results = score_concepts(
+            concept_ids=["A", "B"],
+            weights=weights(),
+            raw_values={"A": raw_values()["A"], "B": raw_values()["B"]},
+            hard_constraints=[
+                HardConstraint(attribute="material", value="recycled", note=None),
+                HardConstraint(attribute="price_band", value="under-25", note=None),
+            ],
+            concept_attributes={
+                "A": {"material": "virgin-plastic"},
+                "B": {"price_band": "over-100"},
+            },
+            scoring_version="v0.1-test",
+        )
+        by_id = {r.concept_id: r for r in results}
+        assert by_id["A"].status == "INFEASIBLE"
+        assert "material" in by_id["A"].infeasible_reason
+        assert by_id["B"].status == "INFEASIBLE"
+        assert "price_band" in by_id["B"].infeasible_reason
+
     def test_missing_criterion_is_none_and_reweights(self):
         values = raw_values()
         values["A"]["C3"] = None  # missing evidence, not zero

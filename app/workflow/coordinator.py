@@ -626,6 +626,37 @@ def _template_verbose_report(brief: DecisionBrief, report: dict[str, Any]) -> st
     return "\n\n".join(parts)
 
 
+def preflight_constraint_check(brief: DecisionBrief) -> None:
+    """Name every constraint that could never be checked, BEFORE any spend.
+
+    The 2026-10-23 decision: a constraint only derives meaning from the
+    attributes the user typed per concept. If a constraint names an attribute
+    no concept declares, starting the run would burn Qloo + LLM budget and
+    then surprise the human at result time. This raises with a per-concept
+    list (the route maps ValueError to a 422 with this message).
+    """
+    problems: list[str] = []
+    for constraint in brief.constraints:
+        missing = sorted(
+            c.concept_id
+            for c in brief.concepts
+            if constraint.attribute not in (c.attributes or {})
+        )
+        if missing:
+            problems.append(
+                f"hard constraint '{constraint.attribute}' = '{constraint.value}' "
+                f"could never be checked: {', '.join(missing)} do not declare "
+                f"the attribute '{constraint.attribute}'"
+            )
+    if problems:
+        raise ValueError(
+            "The brief cannot start as typed: "
+            + "; ".join(problems)
+            + ". Declare the attribute on every concept (or remove the "
+            "constraint)."
+        )
+
+
 def run_decision(
     engine: Engine,
     brief: DecisionBrief,
@@ -667,6 +698,10 @@ def run_decision(
     restored_records: dict[str, list[EvidenceRecord]] | None = None
 
     if run_id is None:
+        # Pre-flight (2026-10-23): a constraint naming an attribute no concept
+        # declares must stop the run at the door - no run row, no Qloo call,
+        # no LLM call, no surprise four minutes later.
+        preflight_constraint_check(brief)
         run_id = create_run(
             engine,
             input_json=brief.model_dump(),
@@ -1337,6 +1372,12 @@ def run_decision(
     winner = next((s for s in scores if s.rank == 1), None)
     fixture_mode = bool(fixture_flags) and all(fixture_flags)
 
+    # Unverifiable constraints (2026-10-23): they never blocked the concept,
+    # and the run says so out loud, once per affected concept.
+    for s in scores:
+        if s.constraint_notice:
+            limitations.append(f"{s.concept_id}: {s.constraint_notice}")
+
     report: dict[str, Any] = {
         "run_id": run_id,
         "state": None,  # filled after terminal move
@@ -1356,6 +1397,9 @@ def run_decision(
                 # coverage gate). The UI shows this verbatim, so a result with
                 # no winner is never a mystery (2026-10-22).
                 "reason": s.infeasible_reason or s.insufficient_reason,
+                # A constraint that could not be checked never blocked this
+                # concept (2026-10-23): it ranks and carries the notice.
+                "constraint_notice": s.constraint_notice,
                 "criterion_scores": [
                     {"criterion": c.criterion, "value": c.value, "weight_applied": c.weight_applied}
                     for c in s.criterion_scores

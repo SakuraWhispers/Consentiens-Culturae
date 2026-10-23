@@ -50,6 +50,10 @@ class Settings:
     # OpenRouter Nemotron) than analyst/critic (e.g. Google AI Studio Gemma).
     llm_researcher_base_url: str | None = None  # None = llm_base_url
     llm_researcher_api_key_env: str | None = None  # NAME of a dedicated env var, optional
+    # Attribute suggester (2026-10-23): a cheap assist model; no dedicated
+    # key (it rides the main pool's key), no run when LLM is disabled.
+    llm_suggester_model: str | None = None  # None = llm_model
+    llm_suggester_base_url: str | None = None  # None = llm_base_url
     llm_timeout_seconds: float = 30.0
 
     @classmethod
@@ -86,6 +90,12 @@ class Settings:
                 else None
             ),
             llm_researcher_api_key_env=_env("LLM_RESEARCHER_API_KEY_ENV"),
+            llm_suggester_model=_env("LLM_SUGGESTER_MODEL"),
+            llm_suggester_base_url=(
+                _env("LLM_SUGGESTER_BASE_URL").rstrip("/")
+                if _env("LLM_SUGGESTER_BASE_URL")
+                else None
+            ),
             llm_timeout_seconds=float(_env("LLM_TIMEOUT_SECONDS", "30") or 30),
         )
 

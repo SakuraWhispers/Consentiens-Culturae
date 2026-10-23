@@ -25,6 +25,7 @@ from pydantic import BaseModel, ValidationError
 from app.agents.llm_client import DEFAULT_LLM_BASE_URL, complete_json
 from app.agents.prompts import (
     ANALYST_SYSTEM,
+    ATTRIBUTE_SUGGESTER_SYSTEM,
     CRITIC_SYSTEM,
     RESEARCHER_SYSTEM,
     REPORTER_SYSTEM,
@@ -413,6 +414,93 @@ def compare_tied_llm(
     return AnalysisDraft(claims=claims, rejected=rejected, raw_head=_raw_head(parsed))
 
 
+def sanitize_suggestions(
+    raw: Any,
+    known_concept_ids: set[str],
+    target_attributes: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Validate the suggester's output, cutting silently the unsalvageable.
+
+    Returns (kept, rejected_notes). Kept items: {"concept_id", "attributes":
+    [{"attribute", "value", "basis", "quote"}]}. The suggester never writes
+    into the brief: the user decides what (if anything) to copy.
+    """
+    kept: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    if not isinstance(raw, list):
+        return [], ["suggestion payload was not a list"]
+    for entry in raw:
+        if not isinstance(entry, dict):
+            rejected.append("suggestion entry was not an object")
+            continue
+        concept_id = str(entry.get("concept_id") or "").strip()
+        if concept_id not in known_concept_ids:
+            rejected.append(f"unknown concept_id {concept_id[:40]!r}")
+            continue
+        attrs_raw = entry.get("attributes")
+        if not isinstance(attrs_raw, list) or not attrs_raw:
+            rejected.append(f"{concept_id}: no attribute proposals")
+            continue
+        attrs: list[dict[str, Any]] = []
+        for a in attrs_raw[:8]:
+            if not isinstance(a, dict):
+                rejected.append(f"{concept_id}: attribute entry was not an object")
+                continue
+            attribute = str(a.get("attribute") or "").strip()[:40]
+            value = str(a.get("value") or "").strip()[:100]
+            if not attribute or not value:
+                rejected.append(f"{concept_id}: empty attribute or value")
+                continue
+            if target_attributes and attribute not in target_attributes:
+                rejected.append(f"{concept_id}: attribute {attribute!r} is not requested")
+                continue
+            basis_raw = str(a.get("basis") or "inferred").strip().lower()
+            basis = basis_raw if basis_raw in ("stated", "inferred") else "inferred"
+            quote = str(a.get("quote") or "").strip()[:120]
+            attrs.append({"attribute": attribute, "value": value, "basis": basis, "quote": quote})
+        if attrs:
+            kept.append({"concept_id": concept_id, "attributes": attrs})
+    return kept, rejected
+
+
+def suggest_attributes_llm(
+    api_key: str,
+    model: str,
+    concepts: list[dict[str, Any]],
+    target_attributes: list[str] | None = None,
+    timeout: float = 30.0,
+    client: httpx.Client | None = None,
+    base_url: str = DEFAULT_LLM_BASE_URL,
+    max_tokens: int | None = None,
+    reasoning: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The cheap attribute suggester (2026-10-23): proposes grounded attribute
+    values the user may copy into the form. Raises on a fully unusable answer
+    (the route maps that to a plain error; nothing is auto-applied)."""
+    payload: dict[str, Any] = {"concepts": concepts}
+    if target_attributes:
+        payload["requested_attribute_keys"] = sorted(target_attributes)
+    parsed = complete_json(
+        api_key,
+        model,
+        ATTRIBUTE_SUGGESTER_SYSTEM,
+        payload,
+        timeout,
+        client,
+        base_url,
+        max_tokens,
+        reasoning,
+        temperature=0.0,
+    )
+    raw = parsed.get("suggestions")
+    if not isinstance(raw, list):
+        raise ValueError("suggester output had no suggestions list")
+    kept, rejected = sanitize_suggestions(
+        raw, {str(c.get("concept_id")) for c in concepts}, set(target_attributes or [])
+    )
+    return kept, rejected
+
+
 def draft_report_llm(
     api_key: str,
     model: str,
@@ -453,4 +541,6 @@ __all__ = [
     "revise_claims_llm",
     "compare_tied_llm",
     "draft_report_llm",
+    "suggest_attributes_llm",
+    "sanitize_suggestions",
 ]

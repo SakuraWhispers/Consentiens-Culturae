@@ -37,3 +37,7 @@ class ConceptScore(BaseModel):
     infeasible_reason: str | None = Field(default=None, max_length=300)
     insufficient_reason: str | None = Field(default=None, max_length=300)
     tie_broken_by: str | None = Field(default=None, max_length=300)
+    # A hard constraint that could NOT be checked (the concept did not
+    # declare the attribute) never blocks: it ranks and carries this notice
+    # (2026-10-23 decision; "cannot be checked" is not "violated").
+    constraint_notice: str | None = Field(default=None, max_length=300)

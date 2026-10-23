@@ -87,3 +87,18 @@ class DecisionBrief(BaseModel):
 from app.schemas.concept import ConceptInput  # noqa: E402  (forward-ref target)
 
 DecisionBrief.model_rebuild()
+
+
+class AttributeSuggestionRequest(BaseModel):
+    """Input for the cheap attribute-suggester assist (2026-10-23).
+
+    Reuses ConceptInput so the form sends exactly what it already has. The
+    suggester only PROPOSES: the user copies what they agree with (nothing is
+    auto-applied), and the gate itself stays deterministic code.
+    """
+
+    concepts: list[ConceptInput] = Field(min_length=1, max_length=N_CONCEPTS)
+    target_attributes: list[str] = Field(
+        default_factory=list, max_length=5,
+        description="attribute keys the user cares about (e.g. from their constraints)",
+    )

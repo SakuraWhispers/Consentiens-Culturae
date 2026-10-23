@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 
 from app.integrations.qloo_adapter import FixtureSource
-from app.schemas.brief import DecisionBrief
+from app.schemas.brief import DecisionBrief, HardConstraint
 from app.services.persistence import get_engine, get_run_bundle, init_db
-from app.workflow.coordinator import run_decision
+from app.workflow.coordinator import preflight_constraint_check, run_decision
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -123,3 +123,22 @@ def test_shared_market_evidence_gets_concept_scoped_ids() -> None:
     bundle = get_run_bundle(eng, out["run_id"])
     ids = [e["evidence_id"] for e in bundle["evidence"]]
     assert len(ids) == len(set(ids))
+
+
+def test_preflight_names_every_concept_that_cannot_satisfy_a_constraint() -> None:
+    b = _brief()
+    b.constraints = [
+        HardConstraint(attribute="shelf_depth", value="shallow", note=None)
+    ]
+    with pytest.raises(ValueError) as excinfo:
+        preflight_constraint_check(b)
+    message = str(excinfo.value)
+    # All three concepts lack the attribute: the message names them all.
+    assert "A, B, C" in message
+    assert "shelf_depth" in message
+
+
+def test_preflight_passes_when_every_concept_declares_the_attribute() -> None:
+    b = _brief()
+    preflight_constraint_check(b)  # must not raise
+

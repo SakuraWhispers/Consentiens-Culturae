@@ -90,6 +90,12 @@ def resolve_pools(settings: Settings) -> dict[str, dict[str, Any]]:
     else:
         researcher_gen = {"max_tokens": 32768}
 
+    # The suggester answers with a handful of short attribute pairs; a small
+    # budget is plenty (and respects Google's <= 16384 rule).
+    suggester_base = settings.llm_suggester_base_url or base_url
+    sug_on_google = "generativelanguage" in suggester_base
+    suggester_gen: dict[str, Any] = {"max_tokens": 2048 if sug_on_google else 4096}
+
     return {
         "main": {
             "model": settings.llm_model,
@@ -102,6 +108,12 @@ def resolve_pools(settings: Settings) -> dict[str, dict[str, Any]]:
             "base_url": researcher_base,
             "api_key": settings.researcher_api_key(),
             "gen": researcher_gen,
+        },
+        "suggester": {
+            "model": settings.llm_suggester_model or settings.llm_model,
+            "base_url": suggester_base,
+            "api_key": _llm_api_key(settings.llm_provider),
+            "gen": suggester_gen,
         },
     }
 

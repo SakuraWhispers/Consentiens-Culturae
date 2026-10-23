@@ -66,6 +66,70 @@ def _client(tmp_path: Path) -> TestClient:
     return TestClient(app)
 
 
+def test_cannot_check_constraint_rejects_with_422_detail(tmp_path: Path) -> None:
+    """Pre-flight (2026-10-23): before any spend, a constraint naming an
+    attribute no concept declares must come back as 422 naming the concept -
+    never as a surprise INFEASIBLE result four minutes later."""
+    payload = _brief_dict()
+    payload["concepts"][0]["attributes"].pop("material", None)  # A loses 'material'
+    with _client(tmp_path) as client:
+        response = client.post("/api/decision-runs", json=payload)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "'material'" in detail
+    assert "A" in detail
+
+
+def test_attribute_suggester_needs_llm_mode(tmp_path: Path) -> None:
+    payload = {
+        "concepts": [
+            {"concept_id": "A", "name": "Mock Studio Notebooks", "description": "Recycled notebook", "attributes": {}}
+        ],
+        "target_attributes": ["material"],
+    }
+    with _client(tmp_path) as client:  # fixture app_mode, LLM disabled
+        response = client.post("/api/attributes/suggest", json=payload)
+    assert response.status_code == 503, response.text
+    assert "LLM_ENABLED" in response.json()["detail"]
+
+
+def test_attribute_suggester_returns_sanitized_proposals(tmp_path: Path, monkeypatch) -> None:
+    def fake_suggest(api_key, model, concepts, target_attributes=None, **kwargs):
+        assert target_attributes == ["material"]
+        kept, rejected = (
+            [
+                {
+                    "concept_id": "A",
+                    "attributes": [
+                        {"attribute": "material", "value": "recycled", "basis": "stated", "quote": "Recycled notebook"}
+                    ],
+                }
+            ],
+            [f"{concepts[0]['concept_id']}: dropped junk"],
+        )
+        return kept, rejected
+
+    monkeypatch.setattr(
+        "app.api.routes_runs.suggest_attributes_llm", fake_suggest
+    )
+    monkeypatch.setenv("LLM_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "google")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-suggester-only")
+    payload = {
+        "concepts": [
+            {"concept_id": "A", "name": "Mock Studio Notebooks", "description": "Recycled notebook", "attributes": {}}
+        ],
+        "target_attributes": ["material"],
+    }
+    with _client(tmp_path) as client:
+        response = client.post("/api/attributes/suggest", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["suggestions"][0]["attributes"][0]["value"] == "recycled"
+    assert body["rejected"] == ["A: dropped junk"]
+
+
+
 def test_health(tmp_path: Path) -> None:
     resp = _client(tmp_path).get("/api/health")
     assert resp.status_code == 200

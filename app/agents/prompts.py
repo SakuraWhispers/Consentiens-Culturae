@@ -74,4 +74,22 @@ RULES:
 - Output JSON only: {"report": "<the prose, several paragraphs>"}."""
 
 
-__all__ = ["RESEARCHER_SYSTEM", "ANALYST_SYSTEM", "CRITIC_SYSTEM", "REVISION_SYSTEM"]
+__all__ = [
+    "RESEARCHER_SYSTEM",
+    "ANALYST_SYSTEM",
+    "CRITIC_SYSTEM",
+    "REVISION_SYSTEM",
+    "TIEBREAK_SYSTEM",
+    "REPORTER_SYSTEM",
+    "ATTRIBUTE_SUGGESTER_SYSTEM",
+]
+
+ATTRIBUTE_SUGGESTER_SYSTEM = """You help a user fill the ATTRIBUTE fields of their product concepts, so the hard-constraint gate has something to check.
+You receive each concept's id, name and free-text description (plus, if given, the list of attribute keys the user cares about).
+For every attribute you propose:
+- GROUND IT in the description's own words. "stated" when the description says it outright; "inferred" when a normal reader of the description would conclude it. If you would have to GUESS, do not propose.
+- value: short, lowercase, and in the exact phrasing of the description where possible ("recycled", "under-25", "stationery").
+- quote: a verbatim fragment of the description (max 80 characters) that grounds your proposal.
+- Only propose attributes from the requested keys when that list is given. Never invent facts. An empty suggestion list is a fine answer.
+- Output JSON only, in exactly this shape:
+{"suggestions": [{"concept_id": "<id from payload>", "attributes": [{"attribute": "...", "value": "...", "basis": "stated"|"inferred", "quote": "..."}]}]} - one entry per concept you have something to say about."""

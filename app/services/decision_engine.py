@@ -61,21 +61,33 @@ def _check_constraints(
     concept_id: str,
     attributes: dict[str, str],
     constraints: list[HardConstraint],
-) -> str | None:
-    """Gate check: return a failure reason, or None when feasible."""
+) -> tuple[str | None, str | None]:
+    """Gate check: (blocking_reason, notice).
+
+    A VIOLATED constraint blocks (INFEASIBLE). A constraint the concept
+    lacks the attribute for can never be checked - code must not invent the
+    fact - so it does NOT block: the concept ranks and the notice is shown
+    (2026-10-23 decision; before this fix everything became INFEASIBLE).
+    Violations dominate: one violated constraint blocks even if another
+    attribute is missing.
+    """
+    violated: str | None = None
+    uncheckable: str | None = None
     for constraint in constraints:
         actual = attributes.get(constraint.attribute)
         if actual is None:
-            return (
-                f"hard constraint '{constraint.attribute}' cannot be checked: "
-                "concept is missing the attribute"
-            )
-        if actual != constraint.value:
-            return (
+            if uncheckable is None:
+                uncheckable = (
+                    f"hard constraint '{constraint.attribute}' could not be "
+                    "checked: the concept does not declare this attribute; "
+                    "no code may invent one - the concept still ranks, flagged"
+                )
+        elif actual != constraint.value and violated is None:
+            violated = (
                 f"hard constraint '{constraint.attribute}' violated: "
                 f"concept has '{actual}', constraint requires '{constraint.value}'"
             )
-    return None
+    return violated, uncheckable
 
 
 def score_concepts(
@@ -125,9 +137,12 @@ def score_concepts(
                 missing.setdefault(cid, set()).add(criterion)
 
     for cid in concept_ids:
-        # 1. Hard-constraint gate.
-        infeasible_reason = _check_constraints(cid, attributes.get(cid, {}), hard_constraints)
-        if infeasible_reason:
+        # 1. Hard-constraint gate. A violated constraint blocks; a constraint
+        # that cannot be checked never blocks - it surfaces as a notice.
+        violated_reason, constraint_notice = _check_constraints(
+            cid, attributes.get(cid, {}), hard_constraints
+        )
+        if violated_reason:
             results.append(
                 ConceptScore(
                     concept_id=cid,
@@ -135,7 +150,7 @@ def score_concepts(
                     criterion_scores=_criterion_scores(
                         cid, soft_weights, raw_values[cid], normalized.get(cid, {}), missing.get(cid, set())
                     ),
-                    infeasible_reason=infeasible_reason,
+                    infeasible_reason=violated_reason,
                 )
             )
             continue
@@ -158,6 +173,7 @@ def score_concepts(
                         f"{INSUFFICIENT_COVERAGE_THRESHOLD:.0%} threshold; "
                         f"criteria without evidence: {', '.join(sorted(missing.get(cid, set())))}"
                     ),
+                    constraint_notice=constraint_notice,
                 )
             )
             continue
@@ -179,6 +195,7 @@ def score_concepts(
                 ),
                 weighted_total=total,
                 coverage=coverage,
+                constraint_notice=constraint_notice,
             )
         )
 

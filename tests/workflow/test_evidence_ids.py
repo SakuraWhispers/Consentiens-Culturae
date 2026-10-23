@@ -129,7 +129,10 @@ def test_rule_critic_does_not_flag_empty_ids_when_evidence_exists() -> None:
     assert missing == [], "the rule critic must not fire when the concept HAS evidence"
 
 
-def test_report_carries_the_reason_a_concept_is_infeasible() -> None:
+def test_a_brief_whose_constraints_cannot_be_checked_stops_at_the_door() -> None:
+    """The 2026-10-23 decision: this scenario used to burn a whole run and
+    then announce every concept INFEASIBLE. It must now be rejected with a
+    message naming the missing attributes - BEFORE the run row exists."""
     from app.schemas.brief import DecisionBrief
 
     brief = _brief()
@@ -140,13 +143,12 @@ def test_report_carries_the_reason_a_concept_is_infeasible() -> None:
     hard = DecisionBrief(**payload)
 
     eng = _engine()
-    out = run_decision(eng, hard, FixtureSource(FIXTURES_DIR))
-    rep = out["report"]
-    assert rep["winner"] is None
-    for rank in rep["ranks"]:
-        assert rank["status"] == "INFEASIBLE"
-        assert "price_band" in (rank["reason"] or "")
-        assert "missing the attribute" in rank["reason"]
+    with pytest.raises(ValueError) as excinfo:
+        run_decision(eng, hard, FixtureSource(FIXTURES_DIR))
+    message = str(excinfo.value)
+    assert "'price_band'" in message
+    assert "do not declare" in message
+
 
 
 def test_infeasible_reason_is_absent_for_a_ranked_concept() -> None:

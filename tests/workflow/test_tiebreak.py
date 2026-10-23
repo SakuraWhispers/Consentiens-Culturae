@@ -134,10 +134,12 @@ def test_without_a_tie_nothing_extra_happens() -> None:
         raise AssertionError("the tie-break must not run without a tie")
 
     # Only one concept can pass the hard constraint, so there is nothing to
-    # tie and the tie-break must stay out of the way.
+    # tie and the tie-break must stay out of the way. (Since the 2026-10-23
+    # pre-flight, a constraint may not reference an attribute a concept does
+    # not declare - so the concepts VIOLATE the gate instead of omitting it.)
     payload = _brief().model_dump()
-    payload["concepts"][1]["attributes"] = {"material": "virgin-plastic"}
-    payload["concepts"][2]["attributes"] = {"material": "virgin-plastic"}
+    payload["concepts"][1]["attributes"]["material"] = "virgin-plastic"
+    payload["concepts"][2]["attributes"]["material"] = "virgin-plastic"
     brief = DecisionBrief(**payload)
 
     eng = _engine()
