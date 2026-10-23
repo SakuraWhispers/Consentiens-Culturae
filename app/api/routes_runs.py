@@ -95,8 +95,23 @@ def health() -> dict[str, str]:
 
 @router.post("/decision-runs")
 def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
-    # Run limiter (free-model budget protection): one at a time, min gap,
-    # daily cap. 429 carries Retry-After; the UI surfaces it verbatim.
+    # Parse and validate BEFORE the limiter takes a slot (audit 2026-10-23):
+    # an invalid brief must not consume one of the day's runs or settle the
+    # 30 s gap. The limiter then guards the only part that spends.
+    brief = DecisionBrief(**request.model_dump(exclude={"run_id"}))
+    run_id = _validated_run_id(request.run_id)
+    try:
+        llm_hooks = _llm_hooks(brief)
+    except ValueError as exc:
+        if "LLM_ENABLED" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise
+    try:
+        # Pre-flight (2026-10-23): name every constraint that could never
+        # be checked BEFORE the run row exists or any call is paid for.
+        preflight_constraint_check(brief)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     limiter = get_run_limiter()
     try:
         limiter.acquire()
@@ -107,47 +122,35 @@ def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     try:
-        brief = DecisionBrief(**request.model_dump(exclude={"run_id"}))
-        run_id = _validated_run_id(request.run_id)
-        try:
-            llm_hooks = _llm_hooks(brief)
-        except ValueError as exc:
-            if "LLM_ENABLED" in str(exc):
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            raise
-        try:
-            # Pre-flight (2026-10-23): name every constraint that could never
-            # be checked BEFORE the run row exists or any call is paid for.
-            preflight_constraint_check(brief)
-            # The run row exists BEFORE the pipeline starts, so the client
-            # (which may know the id already) can follow its progress and
-            # find it again if the request dies.
-            create_run(
-                deps.engine,
-                input_json=brief.model_dump(),
-                scoring_version=deps.scoring_version,
-                workflow_version="w0.1-g2",
-                run_id=run_id,
-            )
-            return run_decision(
-                deps.engine,
-                brief,
-                deps.source,
-                scoring_version=deps.scoring_version,
-                run_id=run_id,
-                **llm_hooks,
-            )
-        except ValueError as exc:
-            # Distinguish hook misconfiguration from brief-contract rejects so
-            # neither hides the other.
-            if "LLM_ENABLED" in str(exc):
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
-            # The database was unreachable (2026-10-21: a DNS blip killed a
-            # live run at its last write). Say so plainly — a bare 500 gave
-            # the user nothing to act on.
-            raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
+        # The run row exists BEFORE the pipeline starts, so the client
+        # (which may know the id already) can follow its progress and
+        # find it again if the request dies.
+        create_run(
+            deps.engine,
+            input_json=brief.model_dump(),
+            scoring_version=deps.scoring_version,
+            workflow_version="w0.1-g2",
+            run_id=run_id,
+        )
+        return run_decision(
+            deps.engine,
+            brief,
+            deps.source,
+            scoring_version=deps.scoring_version,
+            run_id=run_id,
+            **llm_hooks,
+        )
+    except ValueError as exc:
+        # Distinguish hook misconfiguration from brief-contract rejects so
+        # neither hides the other.
+        if "LLM_ENABLED" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+        # The database was unreachable (2026-10-21: a DNS blip killed a
+        # live run at its last write). Say so plainly — a bare 500 gave
+        # the user nothing to act on.
+        raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
 
@@ -213,6 +216,27 @@ def resume_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]
     The Qloo calls are NOT repeated (the evidence is already stored), so a
     resume costs no Qloo quota; the analysis stages run again.
     """
+    # Cheap lookups and refusal paths first (audit 2026-10-23): a 404 or a
+    # 409 for an already-finished run must not burn a run slot or the gap.
+    try:
+        state_value, _ = get_run_state(deps.engine, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="unknown run_id") from exc
+    if state_value in {s.value for s in TERMINAL_STATES}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run already finished ({state_value}); nothing to resume",
+        )
+    try:
+        brief = DecisionBrief(**get_run_input(deps.engine, run_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        llm_hooks = _llm_hooks(brief)
+    except ValueError as exc:
+        if "LLM_ENABLED" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise
     limiter = get_run_limiter()
     try:
         limiter.acquire()
@@ -223,41 +247,21 @@ def resume_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     try:
-        try:
-            state_value, _ = get_run_state(deps.engine, run_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="unknown run_id") from exc
-        if state_value in {s.value for s in TERMINAL_STATES}:
-            raise HTTPException(
-                status_code=409,
-                detail=f"run already finished ({state_value}); nothing to resume",
-            )
-        try:
-            brief = DecisionBrief(**get_run_input(deps.engine, run_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        try:
-            llm_hooks = _llm_hooks(brief)
-        except ValueError as exc:
-            if "LLM_ENABLED" in str(exc):
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            raise
-        try:
-            return run_decision(
-                deps.engine,
-                brief,
-                deps.source,
-                scoring_version=deps.scoring_version,
-                run_id=run_id,
-                restore_evidence=True,
-                **llm_hooks,
-            )
-        except ValueError as exc:
-            if "LLM_ENABLED" in str(exc):
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
-            raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
+        return run_decision(
+            deps.engine,
+            brief,
+            deps.source,
+            scoring_version=deps.scoring_version,
+            run_id=run_id,
+            restore_evidence=True,
+            **llm_hooks,
+        )
+    except ValueError as exc:
+        if "LLM_ENABLED" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+        raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
 

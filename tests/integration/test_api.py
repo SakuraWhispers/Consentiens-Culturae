@@ -103,6 +103,44 @@ def test_cannot_check_constraint_rejects_with_422_detail(tmp_path: Path) -> None
     assert "A" in detail
 
 
+def test_preflight_422_does_not_burn_a_run_slot(tmp_path: Path, monkeypatch) -> None:
+    """Audit fix (2026-10-23): the slot was taken before validation, so a
+    rejected brief consumed one of the day's runs AND settled the 30 s gap.
+    Validation (and cheap refusals) must come first."""
+    monkeypatch.setenv("RUNS_PER_DAY", "2")
+    monkeypatch.setenv("RUN_MIN_GAP_SECONDS", "0")  # the gap is not what's tested
+    reset_run_limiter()
+    invalid = _brief_dict()
+    invalid["concepts"][0]["attributes"].pop("material", None)
+    with _client(tmp_path) as client:
+        rejected = client.post("/api/decision-runs", json=invalid)
+        assert rejected.status_code == 422, rejected.text
+        first = client.post("/api/decision-runs", json=_brief_dict())
+        assert first.status_code == 200, first.text  # slot 1: a real run
+        second = client.post("/api/decision-runs", json=_brief_dict())
+        assert second.status_code == 200, second.text  # slot 2: a real run
+        blocked = client.post("/api/decision-runs", json=_brief_dict())
+        assert blocked.status_code == 429  # the day cap, not the 422 above
+    reset_run_limiter()
+
+
+def test_resume_of_a_finished_run_does_not_burn_a_run_slot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Audit fix (2026-10-23): the 409 for an already-finished run must not
+    consume a slot (it used to, before the limiter was moved after lookups)."""
+    monkeypatch.setenv("RUNS_PER_DAY", "2")
+    monkeypatch.setenv("RUN_MIN_GAP_SECONDS", "0")  # the gap is not what's tested
+    reset_run_limiter()
+    with _client(tmp_path) as client:
+        run_id = client.post("/api/decision-runs", json=_brief_dict()).json()["run_id"]
+        again = client.post(f"/api/decision-runs/{run_id}/resume")
+        assert again.status_code == 409, again.text  # finished; nothing to resume
+        fresh = client.post("/api/decision-runs", json=_brief_dict())
+        assert fresh.status_code == 200, fresh.text  # the slot was NOT burned
+    reset_run_limiter()
+
+
 def test_attribute_suggester_needs_llm_mode(tmp_path: Path) -> None:
     payload = {
         "concepts": [
