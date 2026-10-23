@@ -70,11 +70,6 @@ def redact(obj: Any) -> Any:
     return obj
 
 
-def looks_like_secret(value: str) -> bool:
-    lowered = value.lower()
-    return "key" in lowered or "token" in lowered
-
-
 def try_endpoint(client: httpx.Client, base_url: str, path: str, params: dict[str, str], api_key: str) -> dict[str, Any]:
     url = base_url.rstrip("/") + path
     try:
