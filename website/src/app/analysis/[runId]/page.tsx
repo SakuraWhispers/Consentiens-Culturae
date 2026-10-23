@@ -38,6 +38,14 @@ const STATE_LABELS: Record<string, string> = {
   FAILED_RETRYABLE: "interrupted",
 };
 
+// The run is settled: no further polling, matching the backend's
+// TERMINAL_STATES (FAILED_RETRYABLE expects a resume, so it is not here).
+const TERMINAL_RUN_STATES: readonly string[] = [
+  "COMPLETED",
+  "COMPLETED_WITH_LIMITATIONS",
+  "FAILED_TERMINAL",
+];
+
 function pct(n: number | null): string {
   return n === null ? "—" : `${Math.round(n * 100)}%`;
 }
@@ -69,6 +77,7 @@ function RunPage() {
     let active = true;
     let lastState: string | null = null;
     let lastChange = Date.now();
+    let timer: ReturnType<typeof setInterval> | undefined;
     const tick = async () => {
       try {
         const next = await getRunBundle(runId);
@@ -82,15 +91,19 @@ function RunPage() {
         } else if (Date.now() - lastChange > 120000) {
           setStale(true);
         }
+        if (TERMINAL_RUN_STATES.includes(next.run.state) && timer) {
+          clearInterval(timer);
+          timer = undefined;
+        }
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : String(e));
       }
     };
     tick();
-    const timer = setInterval(tick, 2500);
+    timer = setInterval(tick, 2500);
     return () => {
       active = false;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [runId]);
 
@@ -150,11 +163,7 @@ function RunPage() {
 
   const report = bundle.run.final_report_json;
   const state = bundle.run.state;
-  const isTerminal = [
-    "COMPLETED",
-    "COMPLETED_WITH_LIMITATIONS",
-    "FAILED_TERMINAL",
-  ].includes(state);
+  const isTerminal = TERMINAL_RUN_STATES.includes(state);
 
   if (!report) {
     return (
