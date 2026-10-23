@@ -501,6 +501,23 @@ def suggest_attributes_llm(
     return kept, rejected
 
 
+def strip_prose_fence(prose: str) -> str:
+    """Shed a fenced wrapper (```...```) the model may add around prose.
+
+    One shared implementation: the analyst wrapper strips the fence of its
+    own report, and the coordinator applies the same strip to whatever the
+    reporter hook returns (audit 2026-10-23 - the strip logic used to exist
+    as two separate copies). Co-facing with prose, not with JSON payloads
+    (the JSON-transport fence handling lives in llm_client).
+    """
+    prose = prose.strip()
+    if prose.startswith("```"):
+        prose = prose.split("\n", 1)[-1]
+    if prose.endswith("```"):
+        prose = prose.rsplit("```", 1)[0]
+    return prose.strip()
+
+
 def draft_report_llm(
     api_key: str,
     model: str,
@@ -522,13 +539,7 @@ def draft_report_llm(
     prose = parsed.get("report")
     if not isinstance(prose, str) or not prose.strip():
         raise ValueError("reporter output carried no prose")
-    prose = prose.strip()
-    # Strip a fenced wrapper the model may add around the prose itself.
-    if prose.startswith("```"):
-        prose = prose.split("\n", 1)[-1]
-    if prose.endswith("```"):
-        prose = prose.rsplit("```", 1)[0]
-    prose = prose.strip()
+    prose = strip_prose_fence(prose)
     if not prose:
         raise ValueError("reporter output was only a fence")
     return prose

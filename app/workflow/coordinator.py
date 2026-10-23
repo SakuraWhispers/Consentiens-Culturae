@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
+from app.agents.analyst import strip_prose_fence
 from app.agents.researcher import PlanRejectedError, validate_call
 from app.agents.schemas import ISSUE_CODES
 from app.integrations.qloo_adapter import EvidenceSource, FixtureError, QlooPayload
@@ -1506,12 +1507,7 @@ def run_decision(
                     if isinstance(raw, dict)
                     else str(raw)
                 )
-                prose = str(prose).strip()
-                if prose.startswith("```"):
-                    prose = prose.split("\n", 1)[-1]
-                if prose.endswith("```"):
-                    prose = prose.rsplit("```", 1)[0]
-                prose = prose.strip()
+                prose = strip_prose_fence(str(prose))
                 bad = _number_violations(prose, allowed)
                 if not prose:
                     raise ValueError("reporter returned no prose")

@@ -64,6 +64,39 @@ def test_every_run_carries_a_verbose_report() -> None:
     assert "Cultural affinity" in verbose["prose"] or "screening" in verbose["prose"].lower()
 
 
+def test_strip_prose_fence_sheds_wrappers() -> None:
+    """Audit fix (2026-10-23): the prose-fence strip used to exist as two
+    separate copies (analyst wrapper + coordinator call site); after the
+    dedupe there is one helper, pinned here."""
+    from app.agents.analyst import strip_prose_fence
+
+    assert strip_prose_fence("```markdown\nhello\n```") == "hello"
+    assert strip_prose_fence("  plain prose  ") == "plain prose"
+
+
+def test_a_fenced_report_comes_out_bare() -> None:
+    """A reporter hook may fence its prose; the coordinator strips it with
+    the shared helper so the stored report holds prose only."""
+
+    def critic_fn(claims, score_summary, known_ids):
+        return []
+
+    def fenced_reporter(payload, repair_hint=None):
+        good = _good_report(payload)["report"]
+        return {"report": f"```markdown\n{good}\n```"}
+
+    eng = _engine()
+    out = run_decision(
+        eng, _brief(), FixtureSource(FIXTURES_DIR),
+        critic_fn=critic_fn, reporter_fn=fenced_reporter,
+    )
+    verbose = out["report"]["verbose"]
+    assert verbose["llm_written"] is True
+    assert verbose["attempts"] == 1
+    assert "```" not in verbose["prose"]
+    assert "leads the screening" in verbose["prose"]
+
+
 def test_the_prose_is_llm_written_when_the_reporter_and_critique_succeed() -> None:
     def critic_fn(claims, score_summary, known_ids):
         return []
