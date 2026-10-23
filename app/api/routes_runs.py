@@ -11,6 +11,7 @@ from sqlalchemy.exc import (
     InterfaceError,
     InvalidatePoolError,
     OperationalError,
+    TimeoutError,
 )
 
 from app.config import Settings
@@ -146,7 +147,7 @@ def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str
         if "LLM_ENABLED" in str(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
         # The database was unreachable (2026-10-21: a DNS blip killed a
         # live run at its last write). Say so plainly — a bare 500 gave
         # the user nothing to act on.
@@ -260,7 +261,7 @@ def resume_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]
         if "LLM_ENABLED" in str(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
@@ -275,7 +276,7 @@ def delete_run_endpoint(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[
     """
     try:
         deleted = delete_run(deps.engine, run_id)
-    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="unknown run_id")
@@ -288,7 +289,7 @@ def get_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
         return get_run_bundle(deps.engine, run_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="unknown run_id") from None
-    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
+    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
 
 

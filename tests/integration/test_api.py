@@ -328,6 +328,24 @@ def test_get_run_bundle_returns_503_when_the_database_is_unreachable(
     assert "database was unreachable" in resp.json()["detail"]
 
 
+def test_get_run_bundle_returns_503_when_the_pool_is_exhausted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Audit (2026-10-23): a QueuePool checkout timeout surfaced as a bare
+    500 ASGI traceback. It is a busy-database condition: 503, not a crash."""
+    from sqlalchemy.exc import TimeoutError
+
+    from app.services import persistence
+
+    def _boom(engine):
+        raise TimeoutError("QueuePool limit of size 5 overflow 10 reached")
+
+    monkeypatch.setattr(persistence, "_session", _boom)
+    resp = _client(tmp_path).get("/api/decision-runs/some-run-id")
+    assert resp.status_code == 503
+    assert "database was unreachable" in resp.json()["detail"]
+
+
 def test_get_run_bundle_and_unknown_id(tmp_path: Path) -> None:
     client = _client(tmp_path)
     run_id = client.post("/api/decision-runs", json=_brief_dict()).json()["run_id"]

@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import (
     IntegrityError,
@@ -155,7 +156,26 @@ def normalize_database_url(url: str) -> str:
 
 
 def get_engine(database_url: str) -> Engine:
-    return create_engine(normalize_database_url(database_url), pool_pre_ping=True)
+    # pool_recycle: Neon suspends idle compute and a proxy can cut idle
+    # sockets; recycling avoids surprise reconnects in the middle of a poll
+    # burst (2026-10-23, after a QueuePool timeout). Deliberately still the
+    # default 5+10: widening the pool hides held connections instead of
+    # explaining them.
+    engine = create_engine(
+        normalize_database_url(database_url),
+        pool_pre_ping=True,
+        pool_recycle=240,
+    )
+
+    @event.listens_for(engine, "checkout")
+    def _log_pool_pressure(*_args: Any) -> None:
+        # Names pool pressure in the log at the moment it happens: a later
+        # checkout timeout is then diagnosable (checked-out count, overflow).
+        pool = engine.pool
+        if hasattr(pool, "overflow") and pool.overflow() > 0:
+            logging.getLogger("app.db").warning("db pool pressure: %s", pool.status())
+
+    return engine
 
 
 def init_db(engine: Engine) -> None:

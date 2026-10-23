@@ -35,6 +35,18 @@ def test_get_engine_accepts_both_postgres_prefixes_without_connecting() -> None:
         assert "postgres" in eng.url.drivername
 
 
+def test_pool_pressure_is_logged_when_the_pool_overflows(tmp_path, caplog) -> None:
+    """Audit (2026-10-23): a QueuePool timeout used to be undiscoverable
+    after the fact. The checkout hook names the pressure in the log."""
+    eng = get_engine(f"sqlite:///{tmp_path}/pool.db")
+    held = [eng.connect() for _ in range(6)]  # 5 pooled + 1 overflow
+    try:
+        assert any("db pool pressure" in r.message for r in caplog.records)
+    finally:
+        for conn in held:
+            conn.close()
+
+
 def test_run_lifecycle_roundtrip(engine) -> None:
     run_id = create_run(
         engine,
