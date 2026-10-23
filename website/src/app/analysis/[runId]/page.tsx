@@ -50,6 +50,19 @@ function pct(n: number | null): string {
   return n === null ? "—" : `${Math.round(n * 100)}%`;
 }
 
+// The browser's own "Save as PDF": print the fully rendered page. Every
+// collapsed <details> must print open (the evidence table lives in one).
+// shortcut: the toggles stay open on screen after printing; restoring would
+// need an afterprint listener - add one only when someone complains.
+function printPage() {
+  document
+    .querySelectorAll<HTMLDetailsElement>("details")
+    .forEach((d) => {
+      d.open = true;
+    });
+  window.print();
+}
+
 function RunPage() {
   const params = useParams<{ runId: string }>();
   const router = useRouter();
@@ -243,7 +256,7 @@ function RunPage() {
   return (
     <main className="min-h-screen bg-white">
       {/* Header (shared with Analysis) */}
-      <header className="bg-cream">
+      <header className="bg-cream print:hidden">
         <div className="mx-auto flex max-w-6xl items-start justify-between px-6 py-5">
           <LogoBanner height={72} />
           <nav className="flex gap-10 font-serif text-2xl pt-2">
@@ -255,11 +268,20 @@ function RunPage() {
 
       {/* Title */}
       <div className="mx-auto max-w-6xl px-6 pt-10">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <h1 className="font-serif text-6xl md:text-7xl text-ink">Results</h1>
-          <span className="rounded-md bg-mistline/60 px-3 py-1.5 font-serif text-base text-ink/80">
-            Run {report.run_id.slice(0, 8)} · {bundle.run.state}
-          </span>
+          <div className="flex flex-col items-end gap-3">
+            <span className="rounded-md bg-mistline/60 px-3 py-1.5 font-serif text-base text-ink/80">
+              Run {report.run_id.slice(0, 8)} · {bundle.run.state}
+            </span>
+            <button
+              type="button"
+              onClick={printPage}
+              className="rounded-md bg-royal px-5 py-2 font-serif text-lg text-white hover:bg-ink print:hidden"
+            >
+              Download PDF
+            </button>
+          </div>
         </div>
         {report.fixture_mode && report.fixture_banner && (
           <p className="mt-4 rounded-md border border-mauve/50 bg-mauve/15 px-4 py-2 font-serif text-lg text-ink">
@@ -776,10 +798,10 @@ function RunPage() {
             redacted; no key is ever stored here.
           </p>
           <details className="mt-3">
-            <summary className="cursor-pointer font-serif text-lg text-royal">
+            <summary className="cursor-pointer font-serif text-lg text-royal print:hidden">
               Show the {bundle.evidence.length} evidence records
             </summary>
-            <div className="mt-3 max-h-[32rem] overflow-auto">
+            <div className="mt-3 max-h-[32rem] overflow-auto print:max-h-none print:overflow-visible">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-mistline font-sans text-xs uppercase tracking-wide text-mistslate">
