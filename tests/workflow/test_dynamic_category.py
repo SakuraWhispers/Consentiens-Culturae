@@ -32,14 +32,19 @@ class _FakeLiveSource:
 
     is_live = True
 
-    def __init__(self, tags: list[dict]) -> None:
+    def __init__(self, tags) -> None:
+        # list = same tags for every query; dict = per-query scripting.
         self.tags = tags
         self.calls: list[tuple[str, dict[str, str]]] = []
 
     def load(self, endpoint: str, params: dict[str, str]) -> QlooPayload:
         self.calls.append((endpoint, dict(params)))
         if endpoint == "tags":
-            body: dict = {"success": True, "results": {"tags": self.tags}}
+            if isinstance(self.tags, dict):
+                serving = self.tags.get(params.get("filter.query", ""), [])
+            else:
+                serving = self.tags
+            body: dict = {"success": True, "results": {"tags": serving}}
         elif endpoint == "insights":
             market = params.get("signal.location.query", "")
             if "Narnia" in market:
@@ -163,6 +168,32 @@ def test_a_genre_only_category_still_resolves_and_carries_the_market() -> None:
     assert len(insights) == 1
     assert insights[0]["filter.tags"] == "urn:tag:genre:place:museum"
     assert insights[0]["signal.location.query"] == "US, online and indie bookstores"
+
+
+def test_the_query_ladder_rescues_an_overdescribed_category() -> None:
+    """Live finding 2026-10-24 (run d1395b34…): the researcher's category
+    'cafe dining experience' resolved to nothing while the noun 'cafe'
+    resolves to category:place:cafe 1.0. The resolver now walks a ladder:
+    full phrase, then first word, then last word - max 3 attempts, each
+    recorded; the market call still rides the resolved tag."""
+    source = _FakeLiveSource({
+        "cafe dining experience": [],
+        "cafe": [{"id": "urn:tag:category:place:cafe", "name": "Cafe", "popularity": 1.0}],
+    })
+
+    def researcher(names, category_hint):
+        return _search_plan(names, "cafe dining experience")
+
+    out = _run(_engine(), source, researcher)
+    tag_queries = [p.get("filter.query") for e, p in source.calls if e == "tags"]
+    assert tag_queries[0] == "cafe dining experience"
+    assert "cafe" in tag_queries
+    assert len(tag_queries) <= 3
+    insights = [p for e, p in source.calls if e == "insights"]
+    assert len(insights) == 1
+    assert insights[0]["filter.tags"] == "urn:tag:category:place:cafe"
+    assert insights[0]["signal.location.query"] == "US, online and indie bookstores"
+    assert not any("resolved to no" in lim for lim in out["report"]["limitations"])
 
 
 def test_an_unresolvable_market_text_is_a_recorded_failure_not_a_crash() -> None:

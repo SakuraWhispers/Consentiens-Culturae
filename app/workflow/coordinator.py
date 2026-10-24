@@ -252,41 +252,60 @@ def _plan_calls(brief: DecisionBrief, source: EvidenceSource) -> list[tuple[str 
 
 
 def _resolve_category_tag(
-    source: EvidenceSource, category: str
+    source: EvidenceSource, category: str, attempts_allowed: int = 1
 ) -> tuple[str | None, dict[str, Any]]:
-    """Resolve a category phrase to a place-category tag URN, live.
+    """Resolve a category phrase to a place-tag URN, live, with a query ladder.
 
-    Uses the docs-verified /v2/tags endpoint (filter.query; 2026-10-16) and
-    picks the most popular 'urn:tag:category:place:' hit. Returns
+    Uses the docs-verified /v2/tags endpoint (filter.query; 2026-10-16). The
+    full researcher phrase can be unresolvable for tags that only exist as a
+    plain noun (live finding 2026-10-24: 'cafe dining experience' -> no hit,
+    while 'cafe' -> category:place:cafe 1.0). The ladder tries the full
+    phrase, then the phrase's FIRST word, then its LAST word - at most
+    `attempts_allowed` calls, each recorded in detail. Returns
     (urn | None, detail) - None is a recorded outcome (limitation), never a
     guessed tag. Lives in the coordinator so the planner layer cannot
     accidentally hand a model-written URN to Qloo.
     """
-    payload = source.load("tags", {"filter.query": category})
-    results = payload.payload.get("results") if isinstance(payload.payload, dict) else None
-    tags = results.get("tags") if isinstance(results, dict) else None
-    detail: dict[str, Any] = {"filter_query": category, "tag_count": len(tags) if isinstance(tags, list) else 0}
-    if not isinstance(tags, list) or not tags:
-        return None, detail
-    candidates = [
-        t for t in tags
-        if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:category:place:")
-    ]
-    if not candidates:
-        # 2026-10-24 live verification: museum-type categories resolve only
-        # inside the genre family (no category:place:museum exists).
+    ladder = [category]
+    for extra in (
+        category.split(None, 1)[0] if category.split() else "",
+        category.split()[-1] if category.split() else "",
+    ):
+        if extra and extra.lower() not in [q.lower() for q in ladder]:
+            ladder.append(extra)
+    ladder = ladder[: max(1, attempts_allowed)]
+    detail: dict[str, Any] = {"filter_queries": []}
+    for query in ladder:
+        detail["filter_queries"].append(query)
+        payload = source.load("tags", {"filter.query": query})
+        results = payload.payload.get("results") if isinstance(payload.payload, dict) else None
+        tags = results.get("tags") if isinstance(results, dict) else None
+        detail["tag_count"] = len(tags) if isinstance(tags, list) else 0
+        if not isinstance(tags, list) or not tags:
+            continue
         candidates = [
             t for t in tags
-            if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:genre:place:")
+            if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:category:place:")
         ]
         if candidates:
-            detail["family"] = "genre:place"
-    if not candidates:
-        detail["reason"] = "no place-category/genre tag in the response"
-        return None, detail
-    winner = max(candidates, key=lambda t: float(t.get("popularity") or 0.0))
-    detail.update({"resolved": winner.get("id"), "name": winner.get("name")})
-    return str(winner.get("id")), detail
+            detail["family"] = "category:place"
+        else:
+            # 2026-10-24 live verification: museum-type categories resolve only
+            # inside the genre family (no category:place:museum exists).
+            candidates = [
+                t for t in tags
+                if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:genre:place:")
+            ]
+            if candidates:
+                detail["family"] = "genre:place"
+        if not candidates:
+            continue
+        winner = max(candidates, key=lambda t: float(t.get("popularity") or 0.0))
+        detail["resolved"] = winner.get("id")
+        detail["name"] = winner.get("name")
+        return str(winner.get("id")), detail
+    detail["reason"] = "no place-category/genre tag resolved for any ladder query"
+    return None, detail
 
 
 def _validate_agent_plan(
@@ -942,16 +961,40 @@ def run_decision(
                 "market-level insights call was skipped - C3 market evidence "
                 "is absent this run"
             )
-        elif len(calls) + 2 > max_live_calls:
+        elif max_live_calls - len(calls) < 2:
             limitations.append(
                 "call budget too small for tag resolution plus the insights "
                 "call; the market-level insights call was skipped"
             )
         else:
+            # The ladder may spend more than one /v2/tags call (max 3, live
+            # finding 2026-10-24: the researcher's full phrase can miss where
+            # a single noun hits). Keep 1 call reserved for the insights call.
+            attempts_allowed = min(3, max_live_calls - len(calls) - 1)
+            resolve_attempts = {"n": 0}
+            _real_load = source.load
+
+            def _counted(endpoint: str, params: dict[str, str]) -> QlooPayload:
+                if endpoint == "tags":
+                    resolve_attempts["n"] += 1
+                return _real_load(endpoint, params)
+
+            source.load = _counted  # type: ignore[method-assign]
             try:
-                tag_urn, resolve_detail = _resolve_category_tag(source, category)
+                tag_urn, resolve_detail = _resolve_category_tag(
+                    source, category, attempts_allowed
+                )
             except (QlooError, FixtureError, ValueError) as exc:
-                tag_urn, resolve_detail = None, {"error": str(exc)[:200]}
+                tag_urn, resolve_detail = None, {
+                    "error": str(exc)[:200],
+                    "attempts_made": resolve_attempts["n"],
+                }
+            finally:
+                source.load = _real_load  # type: ignore[method-assign]
+            # The retrieval loop's live-call counter counts only the calls
+            # list; the ladder spend must be carried into it so the
+            # max_live_calls budget holds no matter how it resolved.
+            live_calls += resolve_attempts["n"]
             if tag_urn:
                 note("category_tag_resolved", resolve_detail)
                 calls.append(
