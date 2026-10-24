@@ -1,6 +1,7 @@
 """Decision brief input contract (SCOPE.md section 3, Input row).
 
-Category is fixed to the demo category; users never choose it.
+Category is chosen per run (2026-10-24, owner decision): the researcher names
+it, the code resolves the tag; there is no fixed demo category any more.
 Weights cover the four soft criteria C1, C2, C3, C5 and must sum to 1
 (docs/architecture.md section 3.3). C4 is a gate with NO weight (human decision
 2026-10-15): it never enters the weighted total, and a payload carrying a
@@ -67,7 +68,11 @@ class HardConstraint(BaseModel):
 class DecisionBrief(BaseModel):
     """The one input form. Exactly 3 concepts, up to 3 hard constraints."""
 
-    category: Literal["stationery and creative accessories"] = DEMO_CATEGORY
+    # 2026-10-24 (owner decision): the fixed demo category is gone. The
+    # researcher names the category per run (code resolves it to the tag);
+    # when no category is named anywhere, the market-level insights call is
+    # skipped and the run records a limitation - never a guessed tag.
+    category: str | None = Field(default=None, max_length=120)
     market: str = Field(min_length=1, max_length=120, description='e.g. "Lisbon, Portugal"')
     audience_description: str = Field(min_length=3, max_length=2000)
     business_goal: str = Field(min_length=3, max_length=2000)

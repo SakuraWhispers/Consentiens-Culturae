@@ -26,22 +26,32 @@ def _handler(content: str):
 
 def test_plan_params_list_normalized_to_string() -> None:
     content = json.dumps({
+        "category": "stationery",
         "calls": [
             {"endpoint": "search", "params": {"query": "Mock Studio Notebooks"}},
-            {"endpoint": "insights", "params": {
-                "filter.type": "urn:entity:place",
-                "filter.tags": ["urn:tag:category:place:stationery_store"],
-            }},
         ]
     })
     with httpx.Client(transport=_handler(content)) as client:
         plan = draft_plan_llm(
             "k", "m",
-            ["Mock Studio Notebooks"], "urn:tag:category:place:stationery_store",
+            ["Mock Studio Notebooks"], None,
             client=client,
         )
     assert plan.calls[0].params == {"query": "Mock Studio Notebooks"}
-    assert plan.calls[1].params["filter.tags"] == "urn:tag:category:place:stationery_store"
+    assert plan.category == "stationery"
+
+
+def test_plan_category_urn_is_refused_as_invented() -> None:
+    """Hard-rule companion (2026-10-24): the model must NAME a category; a
+    URN-shaped 'category' (or insights call) is an invented identifier."""
+    content = json.dumps({
+        "category": "urn:tag:category:place:fake_store",
+        "calls": [{"endpoint": "search", "params": {"query": "x"}}],
+    })
+    with httpx.Client(transport=_handler(content)) as client:
+        plan = draft_plan_llm("k", "m", ["x"], None, client=client)
+    assert plan.category is None
+    assert any("urn:" in r for r in plan.rejected)
 
 
 def test_plan_params_int_normalized_to_string() -> None:

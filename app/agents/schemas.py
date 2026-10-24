@@ -12,12 +12,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 # Allowlisted Qloo endpoints the researcher may plan (docs/qloo-api-notes.md §3).
-ALLOWLISTED_ENDPOINTS = ("search", "insights")
+# Planner allowlist (2026-10-24): the researcher proposes SEARCH calls and
+# names a CATEGORY; code resolves the tag ("/v2/tags", docs-verified) and
+# makes the shared insights call itself. A model-written filter.tags URN
+# would be an invented identifier, so "insights" is no longer planner-legal.
+ALLOWLISTED_ENDPOINTS = ("search",)
+ALLOWLISTED_ENDPOINTS_PLUMBING = ("search", "tags", "insights")
 
 # Per-endpoint allowed query-param keys. Anything else is rejected before any
 # network call (no model-chosen URLs, no model-generated code).
 ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "search": frozenset({"query"}),
+    "tags": frozenset({"filter.query"}),
     "insights": frozenset({"filter.type", "filter.tags", "signal.interests.tags"}),
 }
 
@@ -37,12 +43,15 @@ ISSUE_CODES = (
 
 
 class PlannedCall(BaseModel):
-    endpoint: Literal["search", "insights"]
+    endpoint: Literal["search", "tags", "insights"]
     params: dict[str, str] = Field(default_factory=dict)
 
 
 class RetrievalPlan(BaseModel):
     calls: list[PlannedCall] = Field(min_length=1, max_length=10)
+    # The researcher CHOOSES the category (2026-10-24): code resolves it to a
+    # place-category tag via /v2/tags; the model never writes a URN itself.
+    category: str | None = Field(default=None, max_length=120)
     # Resilience (2026-10-20): calls that did not pass the rules are reported,
     # not swallowed; raw_head keeps a truncated copy of the model payload for
     # diagnosis (it never contains keys or Qloo payloads).
@@ -112,6 +121,8 @@ class AgentOutput:
     items: list[Any] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     raw_head: str = ""
+    # The researcher's chosen category travels beside the calls (2026-10-24).
+    category: str | None = None
 
 
 __all__ = [

@@ -171,11 +171,11 @@ def build_hooks(
     timeout = max(settings.llm_timeout_seconds, 300.0)
 
     def researcher_fn(
-        names: list[str], tag_urn: str, repair_hint: str | None = None
+        names: list[str], category_hint: str | None, repair_hint: str | None = None
     ) -> AgentOutput:
         def once() -> RetrievalPlan:
             return draft_plan_llm(
-                researcher_key, r["model"], names, tag_urn,
+                researcher_key, r["model"], names, category_hint,
                 timeout=timeout, base_url=r["base_url"],
                 max_tokens=r["gen"]["max_tokens"], reasoning=r["gen"].get("reasoning"),
                 repair_hint=repair_hint,
@@ -188,6 +188,7 @@ def build_hooks(
             ),
             rejected=list(plan.rejected),
             raw_head=plan.raw_head,
+            category=plan.category,
         )
 
     def analyst_fn(

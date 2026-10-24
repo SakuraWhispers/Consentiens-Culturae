@@ -23,14 +23,24 @@ def validate_call(endpoint: str, params: dict[str, str]) -> list[str]:
     """Rule violations for ONE planned call (empty list = acceptable).
 
     The rules are the same ones the pipeline has always enforced: allowlisted
-    endpoint, allowlisted param keys, no empty values, and (for insights) a
-    present, docs-verified filter.type. Returning every violation instead of
-    raising on the first one lets the caller drop just this call and keep
-    the rest of the plan.
+    endpoint, allowlisted param keys, no empty values. Since 2026-10-24 the
+    researcher's vocabulary is search-only: the market-level insights call is
+    planned by CODE from the category the researcher named, because a
+    model-written filter.tags URN would be an invented identifier.
+
+    Returning every violation instead of raising on the first one lets
+    the caller drop just this call and keep the rest of the plan.
     """
     errors: list[str] = []
     if endpoint not in ALLOWLISTED_ENDPOINTS:
-        errors.append(f"endpoint {endpoint!r} is not on the allowlist")
+        if endpoint in ("insights", "tags"):
+            errors.append(
+                f"endpoint {endpoint!r} is planned by the code itself: name a "
+                "category instead (filter.tags URNs from a model are "
+                "invented identifiers)"
+            )
+        else:
+            errors.append(f"endpoint {endpoint!r} is not on the allowlist")
         return errors
     allowed = ALLOWED_PARAMS[endpoint]
     for key, value in params.items():
@@ -41,20 +51,6 @@ def validate_call(endpoint: str, params: dict[str, str]) -> list[str]:
             errors.append(
                 f"empty value for param {key!r} on {endpoint} "
                 "(Qloo silently ignores bad params — rejected to protect evidence)"
-            )
-    if endpoint == "insights":
-        if "filter.type" not in params:
-            errors.append(
-                "insights call missing required 'filter.type' param "
-                "(Qloo docs: required; invalid params are silently ignored)"
-            )
-        elif params.get("filter.type") not in (None, "urn:entity:place"):
-            # Only the docs-verified type (docs/qloo-api-notes.md) produces the
-            # place-level evidence this pipeline scores; anything else seeds a
-            # 200-plus-dead-evidence insights call instead of a loud failure.
-            errors.append(
-                f"insights filter.type {params.get('filter.type')!r} is not "
-                "the docs-verified 'urn:entity:place' for this pipeline"
             )
     return errors
 
@@ -95,13 +91,15 @@ def validate_plan(plan: RetrievalPlan, max_calls: int = 10) -> RetrievalPlan:
     return plan
 
 
-def researcher_fallback(concept_names: list[str], tag_urn: str | None) -> RetrievalPlan:
-    """Deterministic planner: search per concept + one shared insights call."""
+def researcher_fallback(concept_names: list[str], tag_urn: str | None = None) -> RetrievalPlan:
+    """Deterministic planner: one search per concept.
+
+    Since 2026-10-24 this returns SEARCH calls only: the category→tag URN
+    resolution and the shared market insights call are code-planned in the
+    coordinator (live) or omitted in fixture mode (the loader serves
+    search fixtures only). `tag_urn` stays accepted for script callers.
+    """
     calls: list[dict[str, Any]] = [{"endpoint": "search", "params": {"query": n}} for n in concept_names]
-    if tag_urn:
-        calls.append(
-            {"endpoint": "insights", "params": {"filter.type": "urn:entity:place", "filter.tags": tag_urn}}
-        )
     return validate_plan(RetrievalPlan(calls=calls))
 
 

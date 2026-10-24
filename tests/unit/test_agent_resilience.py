@@ -45,25 +45,21 @@ def _plan(content: str):
 
 # --- researcher plan: transport-shape normalization -------------------------
 
-def test_plan_filter_param_renamed_to_filter_type() -> None:
+def test_plan_insights_call_is_rejected_as_code_planned() -> None:
+    """2026-10-24: the researcher's vocabulary is search-only. An insights
+    call (even a historically-valid one) is rejected with the category
+    instruction, because a model-written filter.tags URN would be an
+    invented identifier."""
     content = json.dumps({"calls": [
         {"endpoint": "search", "params": {"query": "Mock Studio Notebooks"}},
-        {"endpoint": "insights", "params": {"filter": "urn:entity:place"}},
-    ]})
-    plan = _plan(content)
-    assert plan.calls[1].params["filter.type"] == "urn:entity:place"
-    assert "filter" not in plan.calls[1].params
-    assert plan.rejected == []
-
-
-def test_plan_nested_filter_object_expanded() -> None:
-    content = json.dumps({"calls": [
         {"endpoint": "insights", "params": {
-            "filter": {"type": "urn:entity:place", "tags": "urn:tag:category:place:stationery_store"}}},
+            "filter.type": "urn:entity:place",
+            "filter.tags": "urn:tag:category:place:stationery_store"}},
     ]})
     plan = _plan(content)
-    assert plan.calls[0].params["filter.type"] == "urn:entity:place"
-    assert plan.calls[0].params["filter.tags"] == "urn:tag:category:place:stationery_store"
+    assert [c.endpoint for c in plan.calls] == ["search"]
+    assert len(plan.rejected) == 1
+    assert "planned by the code itself" in plan.rejected[0]
 
 
 def test_plan_search_q_param_renamed_to_query() -> None:
@@ -84,7 +80,7 @@ def test_plan_normalization_cannot_smuggle_unknown_keys() -> None:
 def test_plan_bad_call_dropped_good_calls_kept_and_reported() -> None:
     content = json.dumps({"calls": [
         {"endpoint": "search", "params": {"query": "good one"}},
-        {"endpoint": "insights", "params": {"filter.type": "urn:entity:category"}},
+        {"endpoint": "recs", "params": {}},
         {"endpoint": "search", "params": {"query": "good two"}},
     ]})
     plan = _plan(content)
@@ -93,7 +89,7 @@ def test_plan_bad_call_dropped_good_calls_kept_and_reported() -> None:
         "good two",
     ]
     assert len(plan.rejected) == 1
-    assert "urn:entity:place" in plan.rejected[0]
+    assert "allowlist" in plan.rejected[0]
 
 
 def test_plan_with_nothing_usable_still_raises() -> None:
@@ -102,9 +98,10 @@ def test_plan_with_nothing_usable_still_raises() -> None:
         _plan(content)
 
 
-def test_validate_call_reports_the_insights_filter_type_rule() -> None:
-    errors = validate_call("insights", {"filter.tags": "urn:tag:category:place:stationery_store"})
-    assert any("filter.type" in e for e in errors)
+def test_validate_call_rejects_insights_and_tags_as_code_planned() -> None:
+    for endpoint in ("insights", "tags"):
+        errors = validate_call(endpoint, {"filter.tags": "urn:tag:category:place:stationery_store"})
+        assert any("planned by the code itself" in e for e in errors)
 
 
 def test_salvage_calls_keeps_valid_and_reports_rejected() -> None:

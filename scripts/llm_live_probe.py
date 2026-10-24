@@ -173,12 +173,12 @@ def main() -> int:
     )
     from app.schemas.brief import Weights  # noqa: F401  (typing aid only)
 
-    def researcher_fn(names, tag_urn):
-        return pace("researcher", lambda: _researcher_once(names, tag_urn))
+    def researcher_fn(names, category_hint):
+        return pace("researcher", lambda: _researcher_once(names, category_hint))
 
-    def _researcher_once(names, tag_urn):
+    def _researcher_once(names, category_hint):
         plan = draft_plan_llm(
-            researcher_key, nemotron, names, tag_urn,
+            researcher_key, nemotron, names, category_hint,
             timeout=timeout, base_url=researcher_base,
             max_tokens=researcher_gen["max_tokens"], reasoning=researcher_gen.get("reasoning"),
         )
@@ -244,7 +244,7 @@ def main() -> int:
         api_key=qloo_key,
         timeout_seconds=settings.qloo_timeout_seconds,
     )
-    source = LiveEvidenceSource(client, tag_urn="urn:tag:category:place:stationery_store")
+    source = LiveEvidenceSource(client)
 
     print("[run] starting decision run (live Qloo + OpenRouter hooks)...")
     try:

@@ -130,7 +130,7 @@ def _normalize_calls(parsed: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def draft_plan_llm(
-    api_key: str, model: str, concept_names: list[str], tag_urn: str | None,
+    api_key: str, model: str, concept_names: list[str], category_hint: str | None,
     timeout: float = 30.0, client: httpx.Client | None = None,
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
@@ -139,7 +139,8 @@ def draft_plan_llm(
     parsed = complete_json(
         api_key, model, RESEARCHER_SYSTEM,
         _with_hint(
-            {"concepts": concept_names, "tag_urn": tag_urn, "max_calls": 10}, repair_hint
+            {"concepts": concept_names, "category_hint": category_hint, "max_calls": 10},
+            repair_hint,
         ),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="calls",
@@ -150,10 +151,20 @@ def draft_plan_llm(
         raise PlanRejectedError(
             rejected[0] if rejected else "researcher plan contained no usable calls"
         )
+    # The researcher selects the category (2026-10-24). A URN-shaped "category"
+    # is not a category - refuse it rather than resolving an invented id.
+    raw_category = parsed.get("category")
+    category: str | None = None
+    if isinstance(raw_category, str):
+        category = raw_category.strip()[:120] or None
+        if category and category.lower().startswith("urn:"):
+            category = None
+            rejected = list(rejected) + ["model wrote a 'urn:' category; ignored (invented identifier)"]
     return RetrievalPlan(
         calls=[{"endpoint": c["endpoint"], "params": c["params"]} for c in kept],
         rejected=rejected,
         raw_head=_raw_head(parsed),
+        category=category,
     )
 
 

@@ -17,7 +17,6 @@ def test_valid_plan_and_draft_pass() -> None:
     plan = RetrievalPlan(
         calls=[
             {"endpoint": "search", "params": {"query": "Mock notebook"}},
-            {"endpoint": "insights", "params": {"filter.type": "urn:entity:place"}},
         ]
     )
     validate_plan(plan, max_calls=10)
@@ -76,51 +75,20 @@ def test_unknown_param_key_rejected() -> None:
         validate_plan(plan, max_calls=10)
 
 
-def test_insights_missing_filter_type_rejected() -> None:
-    """Qloo /v2/insights REQUIRES filter.type (docs-verified §2; invalid params
-    are silently IGNORED, so a plan without it ships unverifiable evidence).
-    A researcher plan omitting it is rejected; the coordinator then falls back
-    to the deterministic plan (which always carries filter.type) and records
-    the rejection in limitations."""
-    from app.agents.researcher import PlanRejectedError
-
-    plan = RetrievalPlan(calls=[
-        {"endpoint": "search", "params": {"query": "q1"}},
-        {"endpoint": "insights", "params": {"filter.tags": "urn:tag:category:place:stationery_store"}},
-    ])
-    with pytest.raises(PlanRejectedError, match="filter.type"):
-        validate_plan(plan, max_calls=10)
-
-
-def test_insights_empty_filter_type_rejected() -> None:
-    """Live-probe attempt 3 leak: the model sent filter.type='' which passed the
-    key-presence check and sandbagged the insights call (200 + dead evidence).
-    Empty-string values on allowlisted required params must be rejected too."""
+def test_insights_call_is_no_longer_planner_legal() -> None:
+    """2026-10-24 contract change: the researcher names a CATEGORY; the code
+    resolves the tag and plans the insights call itself. Any insights (or
+    tags) call in a plan is rejected - a model-written filter.tags URN would
+    be an invented identifier (hard rule)."""
     from app.agents.researcher import PlanRejectedError
 
     plan = RetrievalPlan(calls=[
         {"endpoint": "search", "params": {"query": "q1"}},
         {"endpoint": "insights", "params": {
-            "filter.type": "", "filter.tags": "urn:tag:category:place:stationery_store"}},
-    ])
-    with pytest.raises(PlanRejectedError, match="filter.type"):
-        validate_plan(plan, max_calls=10)
-
-
-def test_insights_non_verified_filter_type_value_rejected() -> None:
-    """Live-probe attempt 5: a semantically-wrong-but-non-empty filter.type
-    ('urn:entity:category') passed the shape check and degraded the insights
-    call the same way (63 rows + coverage error, vs 120 with the verified
-    value). Only the docs-verified value is acceptable for this pipeline."""
-    from app.agents.researcher import PlanRejectedError
-
-    plan = RetrievalPlan(calls=[
-        {"endpoint": "search", "params": {"query": "q1"}},
-        {"endpoint": "insights", "params": {
-            "filter.type": "urn:entity:category",
+            "filter.type": "urn:entity:place",
             "filter.tags": "urn:tag:category:place:stationery_store"}},
     ])
-    with pytest.raises(PlanRejectedError, match="urn:entity:place"):
+    with pytest.raises(PlanRejectedError, match="planned by the code itself"):
         validate_plan(plan, max_calls=10)
 
 

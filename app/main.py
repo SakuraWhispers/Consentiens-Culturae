@@ -13,8 +13,6 @@ from app.integrations.qloo_adapter import FixtureSource, LiveEvidenceSource
 from app.integrations.qloo_client import QlooClient
 from app.services.persistence import get_engine, init_db
 
-STATIONERY_TAG_URN = "urn:tag:category:place:stationery_store"
-
 
 def create_app(
     database_url: str | None = None,
@@ -38,7 +36,7 @@ def create_app(
             api_key=api_key,
             timeout_seconds=settings.qloo_timeout_seconds,
         )
-        source = LiveEvidenceSource(client, tag_urn=STATIONERY_TAG_URN)
+        source = LiveEvidenceSource(client)
     else:
         source = FixtureSource(fixtures_dir or Path("tests/fixtures"))
 

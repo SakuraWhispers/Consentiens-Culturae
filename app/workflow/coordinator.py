@@ -251,6 +251,35 @@ def _plan_calls(brief: DecisionBrief, source: EvidenceSource) -> list[tuple[str 
     return calls
 
 
+def _resolve_category_tag(
+    source: EvidenceSource, category: str
+) -> tuple[str | None, dict[str, Any]]:
+    """Resolve a category phrase to a place-category tag URN, live.
+
+    Uses the docs-verified /v2/tags endpoint (filter.query; 2026-10-16) and
+    picks the most popular 'urn:tag:category:place:' hit. Returns
+    (urn | None, detail) - None is a recorded outcome (limitation), never a
+    guessed tag. Lives in the coordinator so the planner layer cannot
+    accidentally hand a model-written URN to Qloo.
+    """
+    payload = source.load("tags", {"filter.query": category})
+    results = payload.payload.get("results") if isinstance(payload.payload, dict) else None
+    tags = results.get("tags") if isinstance(results, dict) else None
+    detail: dict[str, Any] = {"filter_query": category, "tag_count": len(tags) if isinstance(tags, list) else 0}
+    if not isinstance(tags, list) or not tags:
+        return None, detail
+    candidates = [
+        t for t in tags
+        if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:category:place:")
+    ]
+    if not candidates:
+        detail["reason"] = "no place-category tag in the response"
+        return None, detail
+    winner = max(candidates, key=lambda t: float(t.get("popularity") or 0.0))
+    detail.update({"resolved": winner.get("id"), "name": winner.get("name")})
+    return str(winner.get("id")), detail
+
+
 def _validate_agent_plan(
     plan: list[tuple[str | None, str, dict[str, str]]],
     known_concepts: list[str],
@@ -825,6 +854,7 @@ def run_decision(
     concept_ids = [c.concept_id for c in brief.concepts]
     calls: list[tuple[str | None, str, dict[str, str]]] = []
     research_mode = "deterministic"
+    agent_category: str | None = None
     if restored_records is not None:
         # RESUME: the previous attempt already paid for the Qloo calls.
         records_by_concept = {
@@ -846,7 +876,7 @@ def run_decision(
             try:
                 proposed = _call_hook(
                     researcher_fn,
-                    ([c.name for c in brief.concepts], getattr(source, "tag_urn", None)),
+                    ([c.name for c in brief.concepts], brief.category),
                     plan_hint,
                 )
             except Exception as exc:
@@ -854,6 +884,9 @@ def run_decision(
                 plan_hint = _repair_hint(exc)
                 continue
             proposed_calls, agent_rejected, raw_head = _unwrap_hook_output(proposed)
+            # The researcher names the category on the hook carrier too (it
+            # does not go through salvage; it is a phrase, not evidence).
+            agent_category = getattr(proposed, "category", None) or None
             calls, plan_limits = _validate_agent_plan(
                 proposed_calls, concept_ids, max_live_calls
             )
@@ -883,21 +916,50 @@ def run_decision(
                 f"researcher plan failed ({type(last_plan_error).__name__}: "
                 f"{str(last_plan_error)[:180]}); deterministic plan used"
             )
-        elif not any(endpoint == "insights" for _, endpoint, _ in calls):
-            # C3 (market relevance) needs the shared insights call. If the
-            # agent's insights call did not survive, use the deterministic
-            # one rather than silently losing the market evidence.
-            deterministic_insights = [
-                call for call in _plan_calls(brief, source) if call[1] == "insights"
-            ]
-            if deterministic_insights:
-                calls.extend(deterministic_insights)
-                limitations.append(
-                    "researcher plan had no usable insights call; "
-                    "deterministic market-insights call added"
-                )
     else:
         calls = _plan_calls(brief, source)
+
+    # The market-level insights call is CODE-planned (2026-10-24): the
+    # category is named by the researcher (or the brief), and the tag URN is
+    # resolved live from the docs-verified /v2/tags endpoint - never
+    # model-written (a URN not received from Qloo is an invented identifier).
+    # Fixture mode is untouched: the synthetic loader has no tags fixture, so
+    # fixture runs keep their exact search-only behavior.
+    if getattr(source, "is_live", False) and restored_records is None:
+        category = (agent_category or brief.category or "").strip()
+        if not category:
+            limitations.append(
+                "no category named (by the researcher or the brief); the "
+                "market-level insights call was skipped - C3 market evidence "
+                "is absent this run"
+            )
+        elif len(calls) + 2 > max_live_calls:
+            limitations.append(
+                "call budget too small for tag resolution plus the insights "
+                "call; the market-level insights call was skipped"
+            )
+        else:
+            try:
+                tag_urn, resolve_detail = _resolve_category_tag(source, category)
+            except (QlooError, FixtureError, ValueError) as exc:
+                tag_urn, resolve_detail = None, {"error": str(exc)[:200]}
+            if tag_urn:
+                note("category_tag_resolved", resolve_detail)
+                calls.append(
+                    (
+                        None,
+                        "insights",
+                        {"filter.type": "urn:entity:place", "filter.tags": tag_urn},
+                    )
+                )
+            else:
+                resolve_detail["category"] = category
+                note("category_tag_unresolved", resolve_detail)
+                limitations.append(
+                    f"category {category!r} resolved to no place-category tag "
+                    "(live): the market-level insights call was skipped - "
+                    "C3 market evidence is absent this run"
+                )
     for owner_id, endpoint, params in calls:
         calls_made += 1
         if getattr(source, "is_live", False):

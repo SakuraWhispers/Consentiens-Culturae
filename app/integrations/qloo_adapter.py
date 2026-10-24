@@ -112,7 +112,7 @@ class LiveEvidenceSource:
 
     is_live = True
 
-    _PATHS = {"search": "/search", "insights": "/v2/insights"}
+    _PATHS = {"search": "/search", "tags": "/v2/tags", "insights": "/v2/insights"}
 
     def __init__(self, client: Any, tag_urn: str | None = None) -> None:
         self._client = client

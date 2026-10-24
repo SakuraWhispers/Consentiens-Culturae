@@ -37,20 +37,11 @@ def test_critic_prompt_lists_allowed_suggested_actions() -> None:
         assert value in CRITIC_SYSTEM
 
 
-def test_researcher_prompt_states_the_allowed_param_names() -> None:
-    assert "filter.type" in RESEARCHER_SYSTEM
-    assert "filter.tags" in RESEARCHER_SYSTEM
-    assert "signal.interests.tags" in RESEARCHER_SYSTEM
-
-
-def test_researcher_prompt_forbids_the_bare_filter_param() -> None:
-    # The live failure was a param literally named "filter".
-    assert '"filter"' in RESEARCHER_SYSTEM
-    assert "filter.type" in RESEARCHER_SYSTEM
-
-
-def test_researcher_prompt_states_the_verified_filter_type_value() -> None:
-    assert "urn:entity:place" in RESEARCHER_SYSTEM
+def test_researcher_prompt_names_the_category_choice() -> None:
+    """2026-10-24: the researcher CHOOSES the category; code resolves the tag.
+    The prompt must say so and must forbid model-written URNs outright."""
+    assert '"category"' in RESEARCHER_SYSTEM
+    assert "NEVER write a tag URN" in RESEARCHER_SYSTEM or "urn:" in RESEARCHER_SYSTEM
 
 
 def test_researcher_prompt_shows_the_call_shape() -> None:

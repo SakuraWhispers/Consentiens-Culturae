@@ -49,12 +49,12 @@ def test_researcher_one_bad_call_keeps_the_good_ones() -> None:
     """A malformed call is dropped and REPORTED; the rest of the plan runs."""
     attempts: list[int] = []
 
-    def researcher(names, tag):
+    def researcher(names, category):
         attempts.append(1)
         return [
-            (None, "search", {"query": "Mock Studio Notebooks"}),
-            # wrong filter.type: the docs-verified value is required
-            (None, "insights", {"filter.type": "urn:entity:category"}),
+            ("A", "search", {"query": "Mock Studio Notebooks"}),
+            # insights is planned by the code itself since 2026-10-24
+            (None, "insights", {"filter.type": "urn:entity:place"}),
         ]
 
     eng = _engine()
@@ -63,7 +63,7 @@ def test_researcher_one_bad_call_keeps_the_good_ones() -> None:
         researcher_fn=researcher,
     )
     limits = out["report"]["limitations"]
-    assert any("urn:entity:place" in lim for lim in limits)
+    assert any("planned by the code itself" in lim for lim in limits)
     # The plan was usable, so no second LLM call was needed.
     assert len(attempts) == 1
     assert out["state"] in ("COMPLETED", "COMPLETED_WITH_LIMITATIONS")
