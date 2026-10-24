@@ -26,6 +26,7 @@ from app.agents.llm_client import DEFAULT_LLM_BASE_URL, complete_json
 from app.agents.prompts import (
     ANALYST_SYSTEM,
     ATTRIBUTE_SUGGESTER_SYSTEM,
+    CONCEPT_CRITIC_SYSTEM,
     CRITIC_SYSTEM,
     RESEARCHER_SYSTEM,
     REPORTER_SYSTEM,
@@ -545,6 +546,37 @@ def draft_report_llm(
     return prose
 
 
+def draft_concept_notes_llm(
+    api_key: str,
+    model: str,
+    payload: dict[str, Any],
+    timeout: float = 30.0,
+    client: httpx.Client | None = None,
+    base_url: str = DEFAULT_LLM_BASE_URL,
+    max_tokens: int | None = None,
+    reasoning: dict[str, Any] | None = None,
+    repair_hint: str | None = None,
+) -> dict[str, Any]:
+    """The per-concept critique notes (2026-10-24): drawbacks per concept
+    plus a short winning-concept note. The coordinator validates the ids,
+    caps the lengths and runs the same number guard as the reporter."""
+    parsed = complete_json(
+        api_key, model, CONCEPT_CRITIC_SYSTEM, _with_hint(payload, repair_hint),
+        timeout, client, base_url, max_tokens, reasoning,
+        temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,
+    )
+    notes = parsed.get("notes")
+    if not isinstance(notes, dict) or not notes:
+        raise ValueError("concept critic output carried no notes")
+    winner_note = parsed.get("winner_note")
+    if not isinstance(winner_note, str) or not winner_note.strip():
+        raise ValueError("concept critic output carried no winner note")
+    return {
+        "notes": {cid: strip_prose_fence(str(text)) for cid, text in notes.items()},
+        "winner_note": strip_prose_fence(winner_note),
+    }
+
+
 __all__ = [
     "draft_plan_llm",
     "draft_claims_llm",
@@ -552,6 +584,7 @@ __all__ = [
     "revise_claims_llm",
     "compare_tied_llm",
     "draft_report_llm",
+    "draft_concept_notes_llm",
     "suggest_attributes_llm",
     "sanitize_suggestions",
 ]

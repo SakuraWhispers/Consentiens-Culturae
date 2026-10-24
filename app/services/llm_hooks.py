@@ -27,6 +27,7 @@ from app.agents.analyst import (
     RetrievalPlan,
     compare_tied_llm,
     draft_claims_llm,
+    draft_concept_notes_llm,
     draft_plan_llm,
     draft_report_llm,
     review_claims_llm,
@@ -296,6 +297,24 @@ def build_hooks(
 
         return {"report": paced(once)()}
 
+    def concept_critic_fn(
+        payload: dict[str, Any],
+        repair_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """The per-concept critique notes (2026-10-24): drawbacks per concept
+        plus a 5-6 line winning-concept note. One extra paced call per run;
+        the coordinator's guards (ids, cap, number guard) judge the output."""
+
+        def once() -> dict[str, Any]:
+            return draft_concept_notes_llm(
+                main_key, m["model"], payload,
+                timeout=timeout, base_url=m["base_url"],
+                max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
+                repair_hint=repair_hint,
+            )
+
+        return paced(once)()
+
     return {
         "researcher_fn": researcher_fn,
         "analyst_fn": analyst_fn,
@@ -303,6 +322,7 @@ def build_hooks(
         "revise_fn": revise_fn,
         "tiebreak_fn": tiebreak_fn,
         "reporter_fn": reporter_fn,
+        "concept_critic_fn": concept_critic_fn,
     }
 
 

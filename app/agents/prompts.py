@@ -74,6 +74,17 @@ RULES:
 - Output JSON only: {"report": "<the prose, several paragraphs>"}."""
 
 
+CONCEPT_CRITIC_SYSTEM = """You write the CRITIQUE NOTES of a completed product-concept screening run: one short note per concept focused on its DRAWBACKS, plus one note on the winning concept.
+RULES:
+- A concept note judges that concept's WEAK POINTS against the claims the analysis made and what the critique found: thin evidence coverage, overclaims, missed attributes, weak criterion scores. State them plainly; do not pad with praise.
+- The winning-concept note is 5-6 lines: what the data says (its rank, weighted total, evidence coverage), the context the claims give, and its main drawback. Tight and honest.
+- NUMBERS ARE IMMUTABLE AND ALREADY COMPUTED. Every number you state MUST appear verbatim in the payload - or be that number rounded to one decimal, or a percent phrasing of a payload fraction (0.25 -> "25 percent"). No other number may appear: never write an invented percentage, count, share or statistic.
+- Cultural affinity is NOT purchase intent. Never write that anything will sell, succeed, or convert. This is a screening aid, not a demand forecast.
+- If two concepts are effectively level, say so - do not manufacture separation.
+- Output JSON only, in exactly this shape:
+{"notes": {"<concept_id>": "<the note>"}, "winner_note": "<the winning-concept note>"} - one entry for EVERY concept id in the payload, using the ids exactly as given."""
+
+
 __all__ = [
     "RESEARCHER_SYSTEM",
     "ANALYST_SYSTEM",
@@ -81,6 +92,7 @@ __all__ = [
     "REVISION_SYSTEM",
     "TIEBREAK_SYSTEM",
     "REPORTER_SYSTEM",
+    "CONCEPT_CRITIC_SYSTEM",
     "ATTRIBUTE_SUGGESTER_SYSTEM",
 ]
 

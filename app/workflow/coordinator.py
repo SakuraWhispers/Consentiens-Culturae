@@ -473,6 +473,63 @@ def _validate_critic_output(
     return findings
 
 
+CONCEPT_NOTE_MAX_CHARS = 900  # shortcut: hard cap, upgrade = reject-and-retry if truncation shows up in a demo
+
+
+def _template_concept_notes(
+    rows: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    findings_by_concept: dict[str, int],
+) -> dict[str, Any]:
+    """The deterministic per-concept critique notes (never an LLM).
+
+    Each note states only computed facts: rank, weighted total, evidence
+    coverage, and the critique's recorded findings for the concept. Used
+    when no concept-critic hook is configured or its output could not be
+    used safely (validation, the number guard, twice).
+    """
+    ranked = [r for r in rows if r.get("status") == "RANKED"]
+    rank_of = len(ranked) or len(rows)
+    notes: dict[str, str] = {}
+    for row in rows:
+        cid = row["concept_id"]
+        if row.get("status") != "RANKED":
+            notes[cid] = (
+                "Not ranked, so there is no critique of weak points against "
+                f"peers: {row.get('reason') or 'the engine excluded this concept.'}"
+            )
+            continue
+        count = findings_by_concept.get(cid, 0)
+        notes[cid] = (
+            f"Rank {row['rank']} of {rank_of}; weighted total "
+            f"{row['weighted_total']} (computed); coverage "
+            f"{row.get('coverage')} evidence records. The critique recorded "
+            f"{count} finding(s) for this concept"
+            + ("." if count == 0 else "; see the critique section for them.")
+        )
+        notes[cid] = notes[cid][:CONCEPT_NOTE_MAX_CHARS]
+    winner = next((r for r in ranked if r.get("rank") == 1), None)
+    if winner is not None and ranked:
+        second = ranked[1] if len(ranked) > 1 else None
+        margin = (
+            f" The runner-up trails by "
+            f"{winner['weighted_total'] - second['weighted_total']:.1f} weighted points."
+            if second
+            else " It was the only ranked concept."
+        )
+        winner_note = (
+            f"Winner: {winner.get('name') or winner['concept_id']} — rank 1 of "
+            f"{len(ranked)} ranked concepts, weighted total "
+            f"{winner['weighted_total']} (computed).{margin} Evidence coverage: "
+            f"{winner.get('coverage')} records available. This is a computed "
+            f"screening result under the user's weights, not a demand forecast."
+        )
+        winner_note = winner_note[:CONCEPT_NOTE_MAX_CHARS]
+    else:
+        winner_note = "No concept ranked, so there is no winner note."
+    return {"notes": notes, "winner_note": winner_note, "llm_written": False}
+
+
 def _template_verbose_report(brief: DecisionBrief, report: dict[str, Any]) -> str:
     """The deterministic verbose report (never an LLM).
 
@@ -671,6 +728,7 @@ def run_decision(
     revise_fn=None,
     tiebreak_fn=None,
     reporter_fn=None,
+    concept_critic_fn=None,
     run_id: str | None = None,
     restore_evidence: bool = False,
 ) -> dict[str, Any]:
@@ -1384,6 +1442,109 @@ def run_decision(
         if s.constraint_notice:
             limitations.append(f"{s.concept_id}: {s.constraint_notice}")
 
+    # The per-concept critique notes (2026-10-24): drawbacks per concept plus
+    # a 5-6 line winning-concept note. Same discipline as the verbose report:
+    # the LLM output is id-checked, length-capped and number-guarded (twice
+    # max), the deterministic notes are the fallback. One extra LLM call.
+    names_map = {c.concept_id: c.name for c in brief.concepts}
+    note_rows = [
+        {
+            "concept_id": s.concept_id,
+            "name": names_map.get(s.concept_id, s.concept_id),
+            "rank": s.rank,
+            "status": s.status,
+            "weighted_total": s.weighted_total,
+            "coverage": s.coverage,
+            "reason": s.infeasible_reason or s.insufficient_reason,
+        }
+        for s in scores
+    ]
+    findings_by_concept = {cid: 0 for cid in concept_ids}
+    for f in findings:
+        cid = f.get("affected_concept_id")
+        if cid in findings_by_concept:
+            findings_by_concept[cid] += 1
+    template_concept_notes_block = _template_concept_notes(
+        note_rows, findings, findings_by_concept
+    )
+    concept_notes_block = template_concept_notes_block
+    if concept_critic_fn is not None and critic_llm:
+        concept_note_payload = {
+            "brief": {
+                "market": brief.market,
+                "audience_description": brief.audience_description,
+            },
+            "concepts": note_rows,
+            "claims": [
+                {k: v for k, v in c.items() if k != "evidence_ids"}
+                for c in claims
+            ],
+            "critic_findings": findings,
+            "limitations": sorted(set(limitations)),
+        }
+        allowed = _collect_allowed_numbers(concept_note_payload)
+        allowed.add(100.0)
+        cn_hint: str | None = None
+        cn_result: tuple[dict[str, str], str] | None = None
+        for attempt in (1, 2):
+            try:
+                raw = _call_hook(concept_critic_fn, (concept_note_payload,), cn_hint)
+                raw_notes = raw.get("notes") if isinstance(raw, dict) else raw
+                if not isinstance(raw_notes, dict) or not raw_notes:
+                    raise ValueError("concept critic output carried no notes")
+                raw_winner = raw.get("winner_note") if isinstance(raw, dict) else None
+                if not isinstance(raw_winner, str) or not raw_winner.strip():
+                    raise ValueError("concept critic output carried no winner note")
+                cleaned: dict[str, str] = {}
+                for cid, text in raw_notes.items():
+                    safe = strip_prose_fence(str(text)) if isinstance(text, str) else ""
+                    if cid not in findings_by_concept:
+                        raise ValueError(f"concept note for unknown id {cid!r}")
+                    if not safe:
+                        raise ValueError(f"concept note for {cid} was empty")
+                    cleaned[cid] = safe[:CONCEPT_NOTE_MAX_CHARS]
+                if set(cleaned) != set(findings_by_concept):
+                    raise ValueError("concept notes must cover every concept id")
+                winner_note = strip_prose_fence(raw_winner)[:CONCEPT_NOTE_MAX_CHARS]
+                joined = " ".join(cleaned.values()) + " " + winner_note
+                bad = _number_violations(joined, allowed)
+                if bad:
+                    raise _NumberGuardError([t for t, _ in bad])
+                cn_result = (cleaned, winner_note)
+                break
+            except _NumberGuardError as exc:
+                cn_hint = exc.hint
+                note(
+                    "concept_notes_guard",
+                    {"attempt": attempt, "guard_hint": (cn_hint or "")[:400]},
+                )
+            except Exception as exc:
+                cn_hint = _repair_hint(exc)
+        if cn_result is not None:
+            concept_notes_block = {
+                "notes": cn_result[0],
+                "winner_note": cn_result[1],
+                "llm_written": True,
+                "template_used": False,
+            }
+        else:
+            limitations.append(
+                "concept notes: the model's critique notes failed validation "
+                "or the number guard twice; the deterministic notes were used"
+            )
+            template_concept_notes_block["template_used"] = True
+            template_concept_notes_block["template_reason"] = (
+                "the concept model's notes could not be used safely"
+            )
+    else:
+        template_concept_notes_block["template_used"] = True
+        template_concept_notes_block["template_reason"] = (
+            "no LLM concept critic is configured"
+            if concept_critic_fn is None
+            else "the critique did not complete; the concept critic only "
+            "writes after a completed critique"
+        )
+
     report: dict[str, Any] = {
         "run_id": run_id,
         "state": None,  # filled after terminal move
@@ -1433,6 +1594,10 @@ def run_decision(
             # deterministic fallback sees only the base claims.
             "claims_reviewed": len(claims)
             + (len(tiebreak_claims) if critic_llm else 0),
+            # The critique, per concept (2026-10-24): drawbacks per concept
+            # plus the winning-concept note. llm_written refers to the notes
+            # block only - the findings above keep their own accounting.
+            "concept_notes": concept_notes_block,
             "evidence_records_available": sum(available_by_concept.values()),
             "issue_codes": list(ISSUE_CODES),
         },

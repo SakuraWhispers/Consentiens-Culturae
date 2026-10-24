@@ -74,6 +74,8 @@ def test_the_report_always_carries_the_critic_meta() -> None:
         "llm_findings",
         "rule_findings",
         "claims_reviewed",
+        # The critique, per concept (Feature B, 2026-10-24).
+        "concept_notes",
         "evidence_records_available",
         "issue_codes",
     }

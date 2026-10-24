@@ -737,6 +737,39 @@ function RunPage() {
               ))}
             </ul>
           )}
+          {report.critic.concept_notes && (
+            <div className="mt-6">
+              <h4 className="font-sans text-sm font-semibold uppercase tracking-wide text-ink/70">
+                The critique, per concept
+                {report.critic.concept_notes.llm_written
+                  ? ""
+                  : " (deterministic — the LLM notes could not be used or were not configured)"}
+              </h4>
+              <div className="mt-3 space-y-2">
+                {Object.entries(report.critic.concept_notes.notes).map(
+                  ([cid, text]) => (
+                    <div
+                      key={cid}
+                      className="rounded-xl border border-mistline bg-cream p-4"
+                    >
+                      <span className="font-sans text-xs font-semibold text-ink/80">
+                        {conceptName(cid)}
+                      </span>
+                      <p className="mt-1 font-serif text-lg text-ink/85">{text}</p>
+                    </div>
+                  )
+                )}
+                <div className="rounded-xl border border-royal/30 bg-white p-4">
+                  <span className="font-sans text-xs font-semibold text-ink/80">
+                    On the winner: {conceptName(report.winner)}
+                  </span>
+                  <p className="mt-1 font-serif text-lg text-ink/85">
+                    {report.critic.concept_notes.winner_note}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* How the seeding and the weights work (plain language) */}
