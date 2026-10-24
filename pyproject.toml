@@ -17,14 +17,14 @@ dependencies = [
     # psycopg: Postgres driver for SQLAlchemy (hosted Postgres: Neon, decision
     # log 2026-10-15). SQLite stays the local default via DATABASE_URL.
     "psycopg[binary]==3.2.*",
+    # uvicorn[standard]: the API server, needed in prod (Render) not just dev
+    "uvicorn[standard]==0.32.*",
 ]
 
 [project.optional-dependencies]
 dev = [
     # pytest: offline test suite; live Qloo calls marked and skipped by default
     "pytest==8.3.*",
-    # uvicorn: run the API locally (AGENTS.md section 7)
-    "uvicorn[standard]==0.32.*",
 ]
 
 [build-system]
