@@ -273,7 +273,16 @@ def _resolve_category_tag(
         if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:category:place:")
     ]
     if not candidates:
-        detail["reason"] = "no place-category tag in the response"
+        # 2026-10-24 live verification: museum-type categories resolve only
+        # inside the genre family (no category:place:museum exists).
+        candidates = [
+            t for t in tags
+            if isinstance(t, dict) and str(t.get("id", "")).startswith("urn:tag:genre:place:")
+        ]
+        if candidates:
+            detail["family"] = "genre:place"
+    if not candidates:
+        detail["reason"] = "no place-category/genre tag in the response"
         return None, detail
     winner = max(candidates, key=lambda t: float(t.get("popularity") or 0.0))
     detail.update({"resolved": winner.get("id"), "name": winner.get("name")})
@@ -949,7 +958,15 @@ def run_decision(
                     (
                         None,
                         "insights",
-                        {"filter.type": "urn:entity:place", "filter.tags": tag_urn},
+                        {
+                            "filter.type": "urn:entity:place",
+                            "filter.tags": tag_urn,
+                            # 2026-10-24 live-verified (P1a): the market text
+                            # rides the SAME call as a signal - affinity is
+                            # re-ranked for the market, zero extra quota. The
+                            # verbatim user string keeps provenance honest.
+                            "signal.location.query": brief.market,
+                        },
                     )
                 )
             else:
@@ -984,6 +1001,14 @@ def run_decision(
                         fixture_mode=not getattr(source, "is_live", False),
                         limitations=[exc.message_safe or "Qloo call failed"],
                     )
+                )
+            if endpoint == "insights":
+                # A failed SHARED market call removes C3 evidence for every
+                # concept at once - louder than a per-record limitation.
+                limitations.append(
+                    f"the shared market insights call failed "
+                    f"({exc.code}: {(exc.message_safe or '')[:120]}); "
+                    "C3 market evidence is absent this run"
                 )
             continue
         targets = [owner_id] if owner_id is not None else list(records_by_concept)
