@@ -22,6 +22,7 @@ import json
 import logging
 import time
 import uuid
+import weakref
 from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
@@ -217,6 +218,7 @@ def create_run(
 
     try:
         _with_db_retry(_op)
+        _evict_bundle_cache(engine, run_id)
     except IntegrityError:
         # The id exists: a retry of the SAME brief reuses the row (idempotent
         # by deterministic ids); a DIFFERENT brief reusing the id would mix
@@ -255,6 +257,7 @@ def update_run_state(
             s.commit()
 
     _with_db_retry(_op)
+    _evict_bundle_cache(engine, run_id)
 
 
 def set_revision_count(engine: Engine, run_id: str, revision_count: int) -> None:
@@ -267,6 +270,7 @@ def set_revision_count(engine: Engine, run_id: str, revision_count: int) -> None
             s.commit()
 
     _with_db_retry(_op)
+    _evict_bundle_cache(engine, run_id)
 
 
 def add_workflow_event(
@@ -296,6 +300,7 @@ def add_workflow_event(
 
     try:
         _with_db_retry(_op)
+        _evict_bundle_cache(engine, run_id)
     except IntegrityError:
         pass  # already recorded by an earlier attempt
     return event_id
@@ -325,6 +330,7 @@ def add_evidence_records(
 
     try:
         _with_db_retry(_op)
+        _evict_bundle_cache(engine, run_id)
     except IntegrityError:
         pass  # the evidence ids already exist
 
@@ -348,6 +354,7 @@ def add_score_snapshot(
 
     try:
         _with_db_retry(_op)
+        _evict_bundle_cache(engine, run_id)
     except IntegrityError:
         pass  # the snapshot already exists
     return score_id
@@ -370,18 +377,44 @@ def add_critic_finding(
 
     try:
         _with_db_retry(_op)
+        _evict_bundle_cache(engine, run_id)
     except IntegrityError:
         pass  # the finding already exists
     return finding_id
 
 
+# get_run_bundle results, keyed per engine (weak) → run_id → (updated_at,
+# bundle). Written paths evict via _evict_bundle_cache (2026-10-24).
+_BUNDLE_CACHE: "weakref.WeakKeyDictionary[Engine, dict[str, tuple[Any, dict[str, Any]]]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _evict_bundle_cache(engine: Engine, run_id: str) -> None:
+    """A write to this run's rows invalidates its cached bundle (if any)."""
+    per_engine = _BUNDLE_CACHE.get(engine)
+    if per_engine is not None:
+        per_engine.pop(run_id, None)
+
+
 def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
+    # Results of get_run_bundle, keyed per engine and run id (one WeakKey dict
+    # per engine, module-level). The page polls every 2.5s while a run is live
+    # and browsers double-fire on refresh; without the cache every tick
+    # re-mounts five tables - the slow link stacked those into the pool storm
+    # (2026-10-24). A bundle only changes when this run's rows change, so each
+    # write helper evicts on success.
+    cache = _BUNDLE_CACHE.setdefault(engine, {})
+
     def _op() -> dict[str, Any]:
         with _session(engine) as s:
             run = s.get(DecisionRun, run_id)
             if run is None:
                 raise ValueError(f"unknown run_id {run_id}")
-            return {
+            saved = cache.get(run_id)
+            if saved is not None and run.updated_at == saved[0]:
+                return saved[1]
+            bundle = {
                 "run": {
                     "run_id": run.run_id,
                     "state": run.state,
@@ -423,6 +456,8 @@ def get_run_bundle(engine: Engine, run_id: str) -> dict[str, Any]:
                 ],
                 "critic": [r.finding_json for r in s.query(CriticFinding).filter_by(run_id=run_id).all()],
             }
+            cache[run_id] = (run.updated_at, bundle)
+            return bundle
 
     return _with_db_retry(_op)
 
@@ -490,7 +525,9 @@ def delete_run(engine: Engine, run_id: str) -> bool:
             s.commit()
             return True
 
-    return _with_db_retry(_op)
+    existed = _with_db_retry(_op)
+    _evict_bundle_cache(engine, run_id)
+    return existed
 
 
 def get_run_state(engine: Engine, run_id: str) -> tuple[str, int]:

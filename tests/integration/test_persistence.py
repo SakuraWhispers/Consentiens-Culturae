@@ -15,6 +15,7 @@ from app.services.persistence import (
     add_score_snapshot,
     add_workflow_event,
     create_run,
+    delete_run,
     get_engine,
     get_run_bundle,
     init_db,
@@ -33,6 +34,35 @@ def test_get_engine_accepts_both_postgres_prefixes_without_connecting() -> None:
     for url in ("postgresql://u:p@host/db", "postgresql+psycopg://u:p@host/db"):
         eng = get_engine(url)
         assert "postgres" in eng.url.drivername
+
+
+def test_the_bundle_cache_serves_reads_until_a_write_evicts(engine) -> None:
+    """Pool-storm fix (2026-10-24): repeated result-page polls re-mount five
+    tables per tick. The cached bundle satisfies a poll until ANY write to
+    this run's rows evicts it - then the read must reflect the new state."""
+    run_id = create_run(
+        engine,
+        input_json={"brief": "b", "concepts": ["a"]},
+        scoring_version="v0.1",
+        workflow_version="w0.1",
+    )
+    first = get_run_bundle(engine, run_id)
+    second = get_run_bundle(engine, run_id)
+    assert second == first, "an unchanged run must be served from the cache"
+
+    update_run_state(engine, run_id, "SCORING")
+    after_state = get_run_bundle(engine, run_id)
+    assert after_state["run"]["state"] == "SCORING", "a write must evict"
+
+    add_evidence_records(
+        engine, run_id, [{"evidence_id": "row-1", "concept_id": "a"}]
+    )
+    after_write = get_run_bundle(engine, run_id)
+    assert len(after_write["evidence"]) == 1, "a write must evict"
+
+    delete_run(engine, run_id)  # also: the delete path itself invalidates
+    with pytest.raises(ValueError, match="unknown run_id"):
+        get_run_bundle(engine, run_id)
 
 
 def test_pool_pressure_is_logged_when_the_pool_overflows(tmp_path, caplog) -> None:
