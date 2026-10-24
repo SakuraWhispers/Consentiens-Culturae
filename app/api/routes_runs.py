@@ -39,6 +39,14 @@ DB_UNAVAILABLE_DETAIL = (
     "Nothing was stored, so this result was lost. Please run it again."
 )
 
+# A QueuePool checkout timeout is DIFFERENT from unreachable: the database is
+# alive but saturated (e.g. stacked slow requests). Nothing was lost; the
+# request should be retried shortly instead of re-run (2026-10-24 pool storm).
+DB_BUSY_DETAIL = (
+    "The database is busy right now, so this request could not be served. "
+    "Nothing was lost. Please try again in a few seconds."
+)
+
 
 class RunRequest(DecisionBrief):
     """The brief plus an optional client-chosen run id.
@@ -147,7 +155,11 @@ def post_run(request: RunRequest, deps: RunDeps = Depends(get_deps)) -> dict[str
         if "LLM_ENABLED" in str(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        # The database is saturated (refresh storms stack slow requests), not
+        # gone. The run never started, so nothing was lost — retryable.
+        raise HTTPException(status_code=503, detail=DB_BUSY_DETAIL) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
         # The database was unreachable (2026-10-21: a DNS blip killed a
         # live run at its last write). Say so plainly — a bare 500 gave
         # the user nothing to act on.
@@ -261,7 +273,9 @@ def resume_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]
         if "LLM_ENABLED" in str(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=DB_BUSY_DETAIL) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     finally:
         limiter.release()
@@ -276,7 +290,9 @@ def delete_run_endpoint(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[
     """
     try:
         deleted = delete_run(deps.engine, run_id)
-    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=DB_BUSY_DETAIL) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="unknown run_id")
@@ -289,7 +305,9 @@ def get_run(run_id: str, deps: RunDeps = Depends(get_deps)) -> dict[str, Any]:
         return get_run_bundle(deps.engine, run_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="unknown run_id") from None
-    except (InvalidatePoolError, OperationalError, InterfaceError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=DB_BUSY_DETAIL) from exc
+    except (InvalidatePoolError, OperationalError, InterfaceError) as exc:
         raise HTTPException(status_code=503, detail=DB_UNAVAILABLE_DETAIL) from exc
 
 

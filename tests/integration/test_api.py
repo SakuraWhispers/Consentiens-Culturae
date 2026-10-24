@@ -343,7 +343,32 @@ def test_get_run_bundle_returns_503_when_the_pool_is_exhausted(
     monkeypatch.setattr(persistence, "_session", _boom)
     resp = _client(tmp_path).get("/api/decision-runs/some-run-id")
     assert resp.status_code == 503
-    assert "database was unreachable" in resp.json()["detail"]
+    # A busy pool is transient: nothing was lost, unlike an unreachable DB
+    # (whose message claims the result is gone - wrong for a read).
+    assert "busy" in resp.json()["detail"]
+    assert "result was lost" not in resp.json()["detail"]
+
+
+def test_post_run_when_the_pool_is_exhausted_says_nothing_was_lost(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+
+    A refresh storm holding the pool must NOT claim the run 'was lost' - it
+    never started. A busy DB is transient: try again shortly.
+    """
+    from sqlalchemy.exc import TimeoutError
+
+    from app.services import persistence
+
+    def _boom(engine):
+        raise TimeoutError("QueuePool limit of size 5 overflow 10 reached")
+
+    monkeypatch.setattr(persistence, "_session", _boom)
+    resp = _client(tmp_path).post("/api/decision-runs", json=_brief_dict())
+    assert resp.status_code == 503
+    assert "try again" in resp.json()["detail"].lower()
+    assert "result was lost" not in resp.json()["detail"]
 
 
 def test_get_run_bundle_and_unknown_id(tmp_path: Path) -> None:
