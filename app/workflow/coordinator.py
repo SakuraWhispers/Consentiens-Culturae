@@ -1,11 +1,10 @@
 """Deterministic coordinator (docs/architecture.md sections 2 and 4).
-
 The only component that moves a run between states, and only through the
 transition table. G2 path: brief -> retrieval plan -> evidence -> normalize ->
 extract -> score -> template explanation -> deterministic critic -> validate ->
 report. LLM stages use deterministic fallbacks (template + rule checks) until
 G3 wires the analyst/critic behind a flag. Sensitivity is deferred to G4 and
-recorded as a limitation. Code only: no LLM call, no randomness.
+recorded as a limitation. Code only: no LLM call.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ MAX_LIVE_CALLS_PER_RUN = 10
 # How many evidence ids per concept the analyst may cite (payload size cap).
 MAX_EVIDENCE_IDS_PER_CONCEPT = 20
 # Two concepts count as tied when their weighted totals are within this many
-# points of each other on the 0-100 scale (human decision, 2026-10-22).
+# points of each other on the 0-100 scale (decision, 2026-10-22).
 TIE_EPSILON_POINTS = 0.5
 
 
@@ -61,7 +60,6 @@ def _tiebreak_retrieval(
     max_calls: int,
 ) -> tuple[dict[str, list[EvidenceRecord]], int, int, int]:
     """Look harder at the tied concepts: one refined search each.
-
     Returns (new_records_by_concept, extra_calls, new_entities,
     known_entities_skipped). An entity that is already known for a concept is
     NOT added again - the same entity is the same entity, and counting it
@@ -99,7 +97,6 @@ def _tiebreak_retrieval(
 
 def _detect_tie(scores: list[Any], epsilon: float = TIE_EPSILON_POINTS) -> dict[str, Any]:
     """Name the concepts that are level with the leader (2026-10-22).
-
     A live run had all three concepts on exactly the same total and still
     declared one winner. The tie is now detected and reported, so the page
     can say "A and B are tied" instead of implying a difference.
