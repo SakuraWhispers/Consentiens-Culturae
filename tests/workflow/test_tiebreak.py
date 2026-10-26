@@ -110,7 +110,7 @@ def test_the_focused_comparison_is_recorded_and_reviewed_by_the_critique() -> No
     def tiebreak_fn(tied, evidence_summary, weights, before, after):
         return [_tiebreak_claim(c["concept_id"]) for c in tied]
 
-    def critic(claims, score_summary, known_ids):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None):
         seen_claims.append(list(claims))
         return []
 
@@ -180,7 +180,7 @@ def test_the_comparison_may_cite_the_new_tie_break_evidence() -> None:
             claims.append(claim)
         return claims
 
-    def critic(claims, score_summary, known_ids):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None):
         return []
 
     eng = _engine()

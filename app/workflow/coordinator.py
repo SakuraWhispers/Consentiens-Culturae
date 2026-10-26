@@ -799,8 +799,8 @@ def run_decision(
     """Injectable agent hooks (G3): each defaults to the deterministic path.
 
     researcher_fn(names, tag_urn) -> plan list; analyst_fn(scores, evidence,
-    limitations, weights) -> claim dicts; critic_fn(claims, scores, known_ids)
-    -> finding dicts; revise_fn(claims, findings) -> revised claim dicts.
+    limitations, weights) -> claim dicts; critic_fn(claims, scores, known_ids,
+    known_ids_by_concept) -> finding dicts; revise_fn(claims, findings) -> revised claim dicts.
     A hook may also return an AgentOutput carrier (items + rejection notes +
     a truncated raw payload); a plain list still works.
 
@@ -1458,13 +1458,27 @@ def run_decision(
         findings = None
         last_error = None
         critic_hint: str | None = None
+        # Wave-1 item 6 (owner-app 2026-10-26): the critic also gets the
+        # per-concept map so it can check that a claim cites its OWN
+        # concept's evidence. Tie-break records are merged into
+        # records_by_concept before this point, so the map covers
+        # everything the run says.
+        known_ids_by_concept = {
+            cid: sorted({r.evidence_id for r in recs if r.evidence_id})
+            for cid, recs in records_by_concept.items()
+        }
         for _attempt in range(2):
             try:
                 out = _call_hook(
                     critic_fn,
                     # The tie-break claims are reviewed as well: the critique
                     # must cover everything the run says.
-                    (claims + tiebreak_claims, score_summary, sorted(known_ids)),
+                    (
+                        claims + tiebreak_claims,
+                        score_summary,
+                        sorted(known_ids),
+                        known_ids_by_concept,
+                    ),
                     critic_hint,
                 )
                 candidate, agent_rejected, raw_head = _unwrap_hook_output(out)

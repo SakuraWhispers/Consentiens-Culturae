@@ -219,11 +219,13 @@ def build_hooks(
         claims: list[dict[str, Any]],
         score_summary: dict[str, Any],
         known_ids: list[str],
+        known_ids_by_concept: dict[str, list[str]] | None = None,
         repair_hint: str | None = None,
     ) -> AgentOutput:
         def once() -> CriticOutput:
             return review_claims_llm(
                 main_key, m["model"], claims, score_summary, sorted(known_ids),
+                evidence_by_concept=known_ids_by_concept,
                 timeout=timeout, base_url=m["base_url"],
                 max_tokens=m["gen"]["max_tokens"], reasoning=m["gen"].get("reasoning"),
                 repair_hint=repair_hint,

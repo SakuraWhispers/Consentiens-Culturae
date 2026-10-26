@@ -78,7 +78,7 @@ def test_a_fenced_report_comes_out_bare() -> None:
     """A reporter hook may fence its prose; the coordinator strips it with
     the shared helper so the stored report holds prose only."""
 
-    def critic_fn(claims, score_summary, known_ids):
+    def critic_fn(claims, score_summary, known_ids, known_ids_by_concept=None):
         return []
 
     def fenced_reporter(payload, repair_hint=None):
@@ -98,7 +98,7 @@ def test_a_fenced_report_comes_out_bare() -> None:
 
 
 def test_the_prose_is_llm_written_when_the_reporter_and_critique_succeed() -> None:
-    def critic_fn(claims, score_summary, known_ids):
+    def critic_fn(claims, score_summary, known_ids, known_ids_by_concept=None):
         return []
 
     eng = _engine()
@@ -122,7 +122,7 @@ def test_a_fabricated_number_is_caught_and_named_in_the_retry() -> None:
             return {"report": "The concept would capture 6995 percent of the market."}
         return _good_report(payload)
 
-    def critic_fn(claims, score_summary, known_ids):
+    def critic_fn(claims, score_summary, known_ids, known_ids_by_concept=None):
         return []
 
     eng = _engine()
@@ -141,7 +141,7 @@ def test_a_reporter_that_keeps_fabricating_falls_back_to_the_template() -> None:
     def reporter_fn(payload, repair_hint=None):
         return {"report": "Sales will reach 3.5 million units within one year."}
 
-    def critic_fn(claims, score_summary, known_ids):
+    def critic_fn(claims, score_summary, known_ids, known_ids_by_concept=None):
         return []
 
     eng = _engine()
@@ -165,7 +165,7 @@ def test_no_verbose_llm_without_a_successful_critique() -> None:
     def reporter_fn(payload, repair_hint=None):  # pragma: no cover - must not run
         raise AssertionError("the reporter must not run after a failed critique")
 
-    def critic_fn(claims, score_summary, known_ids):
+    def critic_fn(claims, score_summary, known_ids, known_ids_by_concept=None):
         raise RuntimeError("the critique provider is down")
 
     eng = _engine()

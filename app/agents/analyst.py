@@ -337,13 +337,18 @@ def review_claims_llm(
     base_url: str = DEFAULT_LLM_BASE_URL,
     max_tokens: int | None = None, reasoning: dict[str, Any] | None = None,
     repair_hint: str | None = None,
+    evidence_by_concept: dict[str, list[str]] | None = None,
 ) -> CriticOutput:
+    payload: dict[str, Any] = {
+        "claims": claims, "scores": score_summary, "known_evidence_ids": evidence_ids,
+    }
+    if evidence_by_concept is not None:
+        # Wave-1 item 6: per-concept evidence map alongside the flat list.
+        # The flat list stays for aggregate claims and backward compatibility.
+        payload["known_evidence_by_concept"] = evidence_by_concept
     parsed = complete_json(
         api_key, model, CRITIC_SYSTEM,
-        _with_hint(
-            {"claims": claims, "scores": score_summary, "known_evidence_ids": evidence_ids},
-            repair_hint,
-        ),
+        _with_hint(payload, repair_hint),
         timeout, client, base_url, max_tokens, reasoning,
         top_level_list_key="findings",
         temperature=REPAIR_TEMPERATURE if repair_hint else 0.0,

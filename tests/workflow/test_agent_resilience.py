@@ -93,7 +93,7 @@ def test_researcher_retry_is_informed_when_the_whole_plan_is_rejected() -> None:
 def test_critic_one_bad_finding_keeps_the_good_ones() -> None:
     """The live failure: severity "medium" killed the whole critique."""
 
-    def critic(claims, score_summary, known_ids):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None):
         return [
             _GOOD_FINDING,
             {**_GOOD_FINDING, "affected_claim_id": "claim-B", "severity": "catastrophic"},
@@ -115,7 +115,7 @@ def test_critic_one_bad_finding_keeps_the_good_ones() -> None:
 def test_critic_retry_is_informed_and_the_second_attempt_is_used() -> None:
     seen_hints: list[str | None] = []
 
-    def critic(claims, score_summary, known_ids, repair_hint=None):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None, repair_hint=None):
         seen_hints.append(repair_hint)
         if repair_hint is None:
             raise ValueError("severity 'medium' is not one of major, minor, info")
@@ -154,7 +154,7 @@ def test_analyst_one_bad_claim_keeps_the_good_ones() -> None:
 
 
 def test_rejected_agent_output_is_persisted_for_diagnosis() -> None:
-    def critic(claims, score_summary, known_ids):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None):
         return [
             _GOOD_FINDING,
             {**_GOOD_FINDING, "affected_claim_id": "claim-B", "severity": "catastrophic"},
@@ -179,7 +179,7 @@ def test_rejected_agent_output_is_persisted_for_diagnosis() -> None:
 def test_critic_all_findings_dropped_falls_back_to_deterministic_checks() -> None:
     """If nothing the critic produced is usable, the safety net takes over."""
 
-    def critic(claims, score_summary, known_ids):
+    def critic(claims, score_summary, known_ids, known_ids_by_concept=None):
         return [{**_GOOD_FINDING, "severity": "catastrophic"}]
 
     eng = _engine()
