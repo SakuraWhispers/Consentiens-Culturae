@@ -222,6 +222,12 @@ __marimo__/
 # Hand-written synthetic fixtures elsewhere in tests/fixtures/ ARE committed.
 tests/fixtures/recorded/
 
+# Local runtime databases: uvicorn outside the deployed stack falls back to the
+# default DATABASE_URL (sqlite:///./consentiens_culturae.db) — your test runs'
+# rows, not project source.
+/consentiens_culturae.db
+/consentiens_culturae.db-journal
+
 # Streamlit
 .streamlit/secrets.toml
 
