@@ -75,7 +75,7 @@ def _tiebreak_retrieval(
             break
         query = f"{names.get(cid, cid)} {brief.market}".strip()
         try:
-            payload = source.load("search", {"query": query})
+            payload = source.load("search", _search_params(source, {"query": query}))
         except (FixtureError, QlooError):
             continue
         extra_calls += 1
@@ -226,6 +226,16 @@ def _move(
     add_workflow_event(engine, run_id, seq, nxt.value, f"enter_{nxt.value.lower()}", detail or {})
     update_run_state(engine, run_id, nxt.value)
     return nxt, seq
+
+
+def _search_params(source: EvidenceSource, params: dict[str, str]) -> dict[str, str]:
+    """Every LIVE concept search is place-typed (Wave-1 item 1, owner-app
+    2026-10-26): the live-verified /search `types` param silences non-place
+    pollution — 'a mixture of both' used to match book titles. Fixture mode
+    is untouched so synthetic runs keep their exact call shape."""
+    if not getattr(source, "is_live", False):
+        return params
+    return {**params, "types": "urn:entity:place"}
 
 
 def _plan_calls(brief: DecisionBrief, source: EvidenceSource) -> list[tuple[str | None, str, dict[str, str]]]:
@@ -1025,7 +1035,8 @@ def run_decision(
                 limitations.append(f"call budget exceeded: stopped after {max_live_calls} live Qloo calls")
                 break
         try:
-            payload: QlooPayload = source.load(endpoint, params)
+            load_params = _search_params(source, params) if endpoint == "search" else params
+            payload: QlooPayload = source.load(endpoint, load_params)
         except FixtureError as exc:
             limitations.append(f"{endpoint} unavailable in fixture mode: {exc}")
             continue
