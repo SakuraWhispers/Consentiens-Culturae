@@ -435,12 +435,20 @@ def sanitize_suggestions(
     raw: Any,
     known_concept_ids: set[str],
     target_attributes: set[str] | None = None,
+    concept_texts: dict[str, list[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Validate the suggester's output, cutting silently the unsalvageable.
 
     Returns (kept, rejected_notes). Kept items: {"concept_id", "attributes":
     [{"attribute", "value", "basis", "quote"}]}. The suggester never writes
     into the brief: the user decides what (if anything) to copy.
+
+    Wave-1 item 9 (owner-app 2026-10-26): when concept_texts is supplied
+    (concept_id -> the user's own texts for that concept), a "stated" basis
+    must quote that text VERBATIM. A non-verbatim or missing quote is demoted
+    to inferred with the quote dropped — the suggester never launders an
+    invented quote into the user's speech. Callers that pass no texts keep
+    the legacy (unverified) behavior.
     """
     kept: list[dict[str, Any]] = []
     rejected: list[str] = []
@@ -459,6 +467,7 @@ def sanitize_suggestions(
             rejected.append(f"{concept_id}: no attribute proposals")
             continue
         attrs: list[dict[str, Any]] = []
+        own_texts = (concept_texts or {}).get(concept_id, [])
         for a in attrs_raw[:8]:
             if not isinstance(a, dict):
                 rejected.append(f"{concept_id}: attribute entry was not an object")
@@ -473,7 +482,21 @@ def sanitize_suggestions(
                 continue
             basis_raw = str(a.get("basis") or "inferred").strip().lower()
             basis = basis_raw if basis_raw in ("stated", "inferred") else "inferred"
-            quote = str(a.get("quote") or "").strip()[:120]
+            quote_raw = str(a.get("quote") or "").strip()
+            # Verify BEFORE the 120-char cap: a truncated quote is no longer
+            # verbatim and a good long quote must not fail on the cap.
+            if basis == "stated" and concept_texts is not None:
+                quote_low = quote_raw.lower()
+                verbatim = bool(quote_low) and any(
+                    quote_low in (t or "").lower() for t in own_texts
+                )
+                if not verbatim:
+                    rejected.append(
+                        f"{concept_id}: quote not verbatim in the concept's own text; demoted to inferred"
+                    )
+                    basis = "inferred"
+                    quote_raw = ""
+            quote = quote_raw[:120]
             attrs.append({"attribute": attribute, "value": value, "basis": basis, "quote": quote})
         if attrs:
             kept.append({"concept_id": concept_id, "attributes": attrs})
@@ -512,8 +535,20 @@ def suggest_attributes_llm(
     raw = parsed.get("suggestions")
     if not isinstance(raw, list):
         raise ValueError("suggester output had no suggestions list")
+    # Wave-1 item 9: the user's OWN texts are what a "stated" quote may
+    # echo — name, description, and the attribute keys/values they typed.
+    own_texts = {
+        str(c.get("concept_id")): [
+            str(c.get("name") or ""),
+            str(c.get("description") or ""),
+            *(f"{k}: {v}" for k, v in (c.get("attributes") or {}).items()),
+            *(str(v) for v in (c.get("attributes") or {}).values()),
+        ]
+        for c in concepts
+    }
     kept, rejected = sanitize_suggestions(
-        raw, {str(c.get("concept_id")) for c in concepts}, set(target_attributes or [])
+        raw, {str(c.get("concept_id")) for c in concepts}, set(target_attributes or []),
+        concept_texts=own_texts,
     )
     return kept, rejected
 
