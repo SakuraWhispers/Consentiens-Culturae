@@ -3,13 +3,18 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 
 try:
     from dotenv import load_dotenv
 
-    _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-    if _ENV_PATH.exists():
-        load_dotenv(_ENV_PATH, override=False)
+    # Dev convenience only: .env supplies local keys for uvicorn/script runs.
+    # Under pytest the load is skipped so the offline suite stays hermetic
+    # (a local .env with APP_MODE=live / LLM_ENABLED=true must not leak in).
+    if "pytest" not in sys.modules:
+        _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+        if _ENV_PATH.exists():
+            load_dotenv(_ENV_PATH, override=False)
 except Exception:
     # Never fail app import just because dotenv is missing
     pass
