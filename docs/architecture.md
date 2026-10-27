@@ -4,7 +4,7 @@ This document describes the system as it should be built. Where something is not
 
 Status legend: **[decided]** settled, change only with approval. **[proposed]** our current plan, may change after the API spike. **[open]** not yet decided.
 
-Last updated: 2026-10-15.
+Last updated: 2026-10-27.
 
 ---
 
@@ -107,7 +107,7 @@ Five criteria. Each returns a value on a 0–100 scale with a documented method.
 ### 3.2 Hard constraints vs. soft weights
 - **Hard constraints** are gates. A concept that violates one is marked `INFEASIBLE` with the reason. It stays visible in the report and cannot be ranked first.
 - **Soft criteria** (C1, C2, C3, C5) contribute to the weighted total.
-- C4 is a gate only (human decision 2026-10-15; implemented in `app/schemas/brief.py` and the decision engine): constraint feasibility never enters the weighted total. Weights cover only the four soft criteria C1, C2, C3, C5 and must sum to 1; a payload that carries a `c4` weight is rejected at the schema gate, not silently discarded.
+- C4 is a gate only (decision 2026-10-15; implemented in `app/schemas/brief.py` and the decision engine): constraint feasibility never enters the weighted total. Weights cover only the four soft criteria C1, C2, C3, C5 and must sum to 1; a payload that carries a `c4` weight is rejected at the schema gate, not silently discarded.
 
 ### 3.3 Weighted total
 `Score(c) = Σ w_j · s_j(c)` with `Σ w_j = 1`, `w_j ≥ 0`, and each `s_j(c)` in 0–100.

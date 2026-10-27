@@ -1,8 +1,8 @@
 # AGENTS.md — Operating manual for AI coding agents
 
-This file is read at the start of every session. It is the short, binding summary. The longer documents it points to are in `SCOPE.md`, `docs/architecture.md`, and `docs/qloo-api-notes.md`. If this file and another document disagree, stop and ask the human which one is current. Do not pick one silently.
+This file is read at the start of every session. It is the short, binding summary. The longer documents it points to are in `SCOPE.md`, `docs/architecture.md`, and `docs/qloo-api-notes.md`. If this file and another document disagree, stop and ask which one is current. Do not pick one silently.
 
-Last updated: 2026-10-15. Owner: solo developer (the human). Change this header when you edit the file.
+Last updated: 2026-10-15. Owner: solo developer. Change this header when you edit the file.
 
 ---
 
@@ -28,7 +28,7 @@ Scope, gates, and the out-of-scope list live in `SCOPE.md`. Check it before prop
 4. **Never log, print, commit, or embed secrets.** The Qloo key lives in an environment variable (`QLOO_API_KEY`). It must never appear in source, tests, fixtures, logs, frontend code, screenshots, or the demo video. Never write a real `.env` file into the repository.
 5. **Fixture data must be labeled.** Any response that did not come from a live Qloo call carries `fixture_mode=true` and is shown as fixture/demo data in the UI and report. The deployed demo never presents fixtures as live Qloo output.
 6. **Never make network calls outside the allowlist.** The only external calls are to the Qloo adapter and to the configured LLM provider. No arbitrary URLs chosen by a model. No model-generated SQL. No model-generated code executed.
-7. **Never add an out-of-scope item** from `SCOPE.md` without the human explicitly moving it in. If a task seems to require one, stop and ask.
+7. **Never add an out-of-scope item** from `SCOPE.md` without explicit approval. If a task seems to require one, stop and ask.
 8. **Never claim a feature works until you have run it.** Report what you ran and what the result was.
 9. **Never claim commercial validity.** Do not write "predicts sales," "probability of success," "validated demand," or any equivalent. "Top-ranked in X% of tested preference scenarios" is the permitted phrasing for sensitivity output.
 10. **Do not use demographic affinity (age or gender) as a primary score input.** It is a stereotyping risk. If it appears at all, it is a labeled, non-scored context field.
@@ -46,7 +46,7 @@ At the start of every session, before writing any code:
    - what the task is,
    - which in-scope item it belongs to,
    - which out-of-scope items are relevant, if any.
-4. If you cannot state the current gate, the context has not loaded. Stop and ask the human to paste `SCOPE.md`.
+4. If you cannot state the current gate, the context has not loaded. Stop and ask to paste `SCOPE.md`.
 
 ---
 
@@ -77,14 +77,14 @@ At the start of every session, before writing any code:
 
 ---
 
-## 5. Tech stack (fixed unless the human approves a change)
+## 5. Tech stack (fixed unless a change is approved)
 
 - Python 3.11+
 - FastAPI (HTTP), Pydantic v2 (contracts), httpx (async HTTP client)
 - PostgreSQL, optionally hosted on Supabase; SQLAlchemy for persistence
 - pytest for tests
 - One simple frontend (framework choice made in Phase 4; do not start it before the backend path works)
-- A typed state machine for workflow. **Do not add LangGraph** unless the human approves it in `SCOPE.md`.
+- A typed state machine for workflow. **Do not add LangGraph** unless approved in `SCOPE.md`.
 
 Do not add: microservices, message queues, Kubernetes, vector databases, custom model training, a RAG pipeline, or per-agent services.
 
@@ -152,7 +152,7 @@ python scripts/qloo_smoke_test.py
 
 ---
 
-## 8. Reporting back to the human
+## 8. Reporting back
 
 End each work session with:
 

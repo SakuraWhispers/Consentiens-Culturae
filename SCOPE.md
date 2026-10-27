@@ -2,7 +2,7 @@
 
 This file controls what gets built and when. Check it before proposing any feature. Changing it is a deliberate act, recorded in the Decision log at the bottom.
 
-Last updated: 2026-10-15.
+Last updated: 2026-10-27.
 
 ---
 
@@ -22,33 +22,35 @@ Consentiens-Culturae helps a small consumer brand compare three competing produc
 3. **Bounded critique**: analyst drafts an explanation from structured results; critic checks it; at most one revision.
 4. **Sensitivity analysis**: seeded sampling of valid weight vectors → top-rank frequency and rank stability.
 
+All four stages are **implemented, offline-tested (≈260 tests, all green), and deployed**. Wave-1 hardening on top (2026-10-26, all live-verified or offline-proven): every live `/search` is place-typed (`urn:entity:place`, kills book/media pollution); the critic receives a per-concept evidence map (`known_evidence_by_concept`); the suggester's "stated" basis requires a verbatim quote from the concept's own text. RESUME for half-finished runs and DELETE reuse the same persistence layer.
+
 Anything that does not fit one of these four stages, or the UI and persistence that support them, is out of scope.
 
 ---
 
 ## 3. In scope (v1, submission)
 
-| Area | Item | Hard cap |
-|---|---|---|
-| Input | One decision brief form: category (fixed), market, audience description, business goal, up to 3 hard constraints, weights for the 4 soft criteria (C1, C2, C3, C5; C4 is a weightless gate), exactly 3 concepts | 3 concepts, 5 criteria |
-| Retrieval | Qloo calls from an allowlist (exact list in `docs/qloo-api-notes.md`) | max 10 Qloo calls per run; 10 s timeout per call; 1 retry on 429 with backoff |
-| Evidence | Normalized `EvidenceRecord`s with provenance, match quality, coverage status, `fixture_mode` | — |
-| Scoring | 5 criteria (see architecture doc), one `scoring_version`, hard constraints as gates | 1 scoring version |
-| Explanation | Analyst (LLM) writes rationale from structured results only | 1 call per run |
-| Critique | Critic (LLM) checks against fixed issue codes; at most 1 revision | 1 critic pass, 1 revision |
-| Sensitivity | Seeded sampling of weight vectors; top-rank frequency; rank range; which criterion moves the winner | 1,000 samples, fixed seed, fixed ranges |
-| Persistence | `decision_runs`, `evidence_records`, `workflow_events`, `score_snapshots`, `critic_findings` | Postgres or SQLite locally |
-| Report UI | Brief form, progress view (polling), report with ranks, breakdown, evidence drawer, critic findings, sensitivity chart, limitations, validation steps | One screen each |
-| Operations | Health endpoint, fixture/live label, README, LICENSE, `.env.example` | — |
-| Tests | Unit (scoring, constraints, missing data, reproducibility), integration (adapter on fixtures), workflow transitions, critic schema, adversarial fixtures | — |
+| Area | Item | Hard cap | Status |
+|---|---|---|---|
+| Input | One decision brief form: category (fixed), market, audience description, business goal, up to 3 hard constraints, weights for the 4 soft criteria (C1, C2, C3, C5; C4 is a weightless gate), exactly 3 concepts | 3 concepts, 5 criteria | **built** (structured concept attributes added 2026-10-22) |
+| Retrieval | Qloo calls from an allowlist (exact list in `docs/qloo-api-notes.md`) | max 10 Qloo calls per run; 10 s timeout per call; 1 retry on 429 with backoff | **built + hardened** (researcher-planned, allowlist-enforced, tie-break aware) |
+| Evidence | Normalized `EvidenceRecord`s with provenance, match quality, coverage status, `fixture_mode` | — | **built** (match quality + entity name in the drawer) |
+| Scoring | 5 criteria (see architecture doc), one `scoring_version`, hard constraints as gates | 1 scoring version | **built** (INFEASIBLE + INSUFFICIENT_EVIDENCE paths live) |
+| Explanation | Analyst (LLM) writes rationale from structured results only | 1 call per run | **built** (schema contracts + synonym bridges + per-item salvage) |
+| Critique | Critic (LLM) checks against fixed issue codes; at most 1 revision | 1 critic pass, 1 revision | **built + widened** (informed retry; per-concept evidence map since 2026-10-26) |
+| Sensitivity | Seeded sampling of weight vectors; top-rank frequency; rank range; which criterion moves the winner | 1,000 samples, fixed seed, fixed ranges | **built** (tie-aware phrasing live) |
+| Persistence | `decision_runs`, `evidence_records`, `workflow_events`, `score_snapshots`, `critic_findings` | Postgres or SQLite locally | **built** (incremental + fault-tolerant + RESUME/DELETE for half-finished runs) |
+| Report UI | Brief form, progress view (polling), report with ranks, breakdown, evidence drawer, critic findings, sensitivity chart, limitations, validation steps | One screen each | **built** (Next.js in `website/`, deployed) |
+| Operations | Health endpoint, fixture/live label, README, LICENSE, `.env.example` | — | **built** (pool-drain cache + 503 wording; local SQLite db gitignored) |
+| Tests | Unit (scoring, constraints, missing data, reproducibility), integration (adapter on fixtures), workflow transitions, critic schema, adversarial fixtures | — | **built** (≈260 offline tests passing; live tests skipped by default) |
 
 ---
 
 ## 4. Out of scope (do not build, do not propose without asking)
 
 - Authentication, user accounts, billing, teams, sharing permissions
-- Run history and browsing past reports (optional; only if Phase 4 is done early and the human approves)
-- The optional `POST /api/decision-runs/{id}/recompute` endpoint (the frontend may recompute client-side only if the human approves)
+- Run history and browsing past reports (optional; only if Phase 4 is done early and approval is given)
+- The optional `POST /api/decision-runs/{id}/recompute` endpoint (the frontend may recompute client-side only if approval is given)
 - LangGraph or any workflow framework
 - Message queues, Redis, Kafka, Kubernetes, microservices, separate agent services
 - Vector databases, RAG over documents, custom or fine-tuned models
@@ -71,10 +73,10 @@ Dates are Eastern Daylight Time unless stated. Each gate has an acceptance check
 
 | Gate | Date | Acceptance check | Status |
 |---|---|---|---|
-| G0 Eligibility and access | Oct 16 | Human confirms eligibility against the official rules page. Hackathon key obtained. Starter kit read. | open |
-| G1 API spike | Oct 16 | `scripts/qloo_smoke_test.py` makes one authenticated call, parses the response into an internal object, and the result is recorded in `docs/qloo-api-notes.md`. Recorded response saved REDACTED and LOCAL-ONLY (gitignored, per the 2026-10-16 fixture policy), or as a synthetic fixture if live recording is not possible. | open |
-| G2 Thin vertical slice | Oct 19 | Brief + 3 concepts → real Qloo evidence (or labeled fixture) → normalized records → deterministic ranking → report. Reproducibility test passes (same inputs, same output, 10 runs). | passed 2026-10-16 (live confirm + 10-run test; human sign-off) |
-| G3 Agent roles and critic | Oct 22 | Researcher plans retrieval within the allowlist. Analyst drafts explanation. Critic runs once. One deliberately injected defect is caught and recorded in `critic_findings`. Coordinator handles the revision or qualifies the claim. | **PASSED 2026-10-17 (human sign-off).** Evidence: all four roles live-verified (analyst 5 schema-valid claims on run acbe81273f2f42f387519bc715cbbce1; critic validated on 3 model instances; researcher enforcement proven on accepted AND rejected plans; injected-defect + revision loop proven in offline tests); 116 offline tests passing. |
+| G0 Eligibility and access | Oct 16 | Confirms eligibility against the official rules page. Hackathon key obtained. Starter kit read. | **PASSED 2026-10-16** — key obtained, rules read, kit reviewed. |
+| G1 API spike | Oct 16 | `scripts/qloo_smoke_test.py` makes one authenticated call, parses the response into an internal object, and the result is recorded in `docs/qloo-api-notes.md`. Recorded response saved REDACTED and LOCAL-ONLY (gitignored, per the 2026-10-16 fixture policy), or as a synthetic fixture if live recording is not possible. | **PASSED 2026-10-16** — base URL + auth verified live; all findings recorded in `docs/qloo-api-notes.md`; recorded fixtures saved local-only. |
+| G2 Thin vertical slice | Oct 19 | Brief + 3 concepts → real Qloo evidence (or labeled fixture) → normalized records → deterministic ranking → report. Reproducibility test passes (same inputs, same output, 10 runs). | passed 2026-10-16 (live confirm + 10-run test; sign-off) |
+| G3 Agent roles and critic | Oct 22 | Researcher plans retrieval within the allowlist. Analyst drafts explanation. Critic runs once. One deliberately injected defect is caught and recorded in `critic_findings`. Coordinator handles the revision or qualifies the claim. | **PASSED 2026-10-17 (sign-off).** Evidence: all four roles live-verified (analyst 5 schema-valid claims on run acbe81273f2f42f387519bc715cbbce1; critic validated on 3 model instances; researcher enforcement proven on accepted AND rejected plans; injected-defect + revision loop proven in offline tests); 116 offline tests passing. |
 | G4 Sensitivity analysis | Oct 24 | Seeded sampler runs. Top-rank frequency and rank range render. Changing a weight produces a deterministic, explainable change. If this fails, fall back to 3 named weight scenarios. | open |
 | G5 Deployed demo | Oct 26 | Backend and frontend deployed. Live Qloo integration verified on the deployed instance (or fixture mode clearly labeled). Works in a fresh browser session. | open |
 | G6 Feature freeze | Oct 29 | No new features. README, LICENSE, About section, known limitations, demo script, screenshots complete. | open |
@@ -84,7 +86,7 @@ Dates are Eastern Daylight Time unless stated. Each gate has an acceptance check
 
 ### If a gate is missed
 
-- Missed G1 (no usable Qloo response): do not build agents on assumed data. Build against labeled fixtures, record the access problem, and narrow the demo to what the real API supports. Tell the human.
+- Missed G1 (no usable Qloo response): do not build agents on assumed data. Build against labeled fixtures, record the access problem, and narrow the demo to what the real API supports. Tell the decision-maker.
 - Missed G2: cut optional Level-C features. Ship the deterministic core.
 - Missed G3: ship the coordinator with a critic that runs but is limited to deterministic checks (constraint violations, missing evidence, score mismatch). Report it honestly.
 - Missed G4: ship the named-scenario version.
@@ -130,18 +132,18 @@ Metrics: evidence traceability, unsupported-claim count, score-explanation consi
 Append-only. Newest entries at the bottom. Format: `YYYY-MM-DD | what changed | why | approved by`
 
 - 2026-10-15 | Initial scope written from handoff v1.0 | Establish gates and out-of-scope list before coding | human (solo developer)
-- 2026-10-15 | Hosted Postgres choice: Neon (fills the "optionally hosted on Supabase" slot in the stack) | Free-plan standard-Postgres, SQLAlchemy-compatible via DATABASE_URL; fits demo scale and judging window; human raised and approved | human (solo developer)
+- 2026-10-15 | Hosted Postgres choice: Neon (fills the "optionally hosted on Supabase" slot in the stack) | Free-plan standard-Postgres, SQLAlchemy-compatible via DATABASE_URL; fits demo scale and judging window; raised and approved | decision-maker (solo developer)
 - 2026-10-16 | Docs moved into `docs/` (architecture.md, qloo-api-notes.md) | AGENTS.md layout names `docs/architecture.md` and `docs/qloo-api-notes.md`; root placement left all `docs/...` references broken; human chose move-over-root-refs | human (solo developer)
-- 2026-10-16 | Fixture policy: hand-written synthetic fixtures committable to the public repo; recorded live-response fixtures local-only (gitignored) | Official hackathon guide forbids storing Qloo response data in a public repo; committed recorded fixtures would risk the Qloo-API-usage pass/fail gate; human approved | human (solo developer)
-- 2026-10-16 | Product name changed from working name "CultureFit Decision Engine" to **Consentiens-Culturae** across AGENTS.md, SCOPE.md, docs/, pyproject.toml, app code, session log | Human owner's explicit instruction in session; name appeared in AGENTS.md §1 as "(working name, may change)" | human (solo developer)
+- 2026-10-16 | Fixture policy: hand-written synthetic fixtures committable to the public repo; recorded live-response fixtures local-only (gitignored) | Official hackathon guide forbids storing Qloo response data in a public repo; committed recorded fixtures would risk the Qloo-API-usage pass/fail gate; approved | decision-maker (solo developer)
+- 2026-10-16 | Product name changed from working name "CultureFit Decision Engine" to **Consentiens-Culturae** across AGENTS.md, SCOPE.md, docs/, pyproject.toml, app code, session log | Explicit instruction; name appeared in AGENTS.md §1 as "(working name, may change)" | decision-maker (solo developer)
 - 2026-10-16 | Backfilled decision line for the 2026-10-15 C4 decision (decided with the human on 2026-10-15; code shipped same day): C4 constraint-feasibility is a weightless gate; weights cover only C1, C2, C3, C5 and sum to 1; a payload with a `c4` weight is rejected, not dropped | C4 as a weighted score would double-count a gate and risk contradictory ranking | human (2026-10-15 session); line backfilled (session)
-- 2026-10-16 | G2 gate PASSED (live confirm C 73.8 > A 67.5 on real evidence + 10-run reproducibility green; human sign-off in session) | acceptance check ran and recorded before marking, per AGENTS.md §9 | human (solo developer)
+- 2026-10-16 | G2 gate PASSED (live confirm C 73.8 > A 67.5 on real evidence + 10-run reproducibility green; sign-off) | acceptance check ran and recorded before marking, per AGENTS.md §9 | decision-maker (solo developer)
 - 2026-10-16 | Level B/C boundary adopted from handoff: Level B = core + ONE API endpoint + minimal report UI, stable by Oct 19; Level C = B + agentic/analytical behavior (no new infrastructure); cut C before shipping broken B | clarifies G2 scope: API endpoint + minimal UI move INTO G2 | human (pasted handoff §20 wording)
 - 2026-10-17 | G3 gate set to PROVISIONAL (researcher enforcement + critic live-verified; analyst live confirmation pending free-pool capacity; sign-off pending) | partial-status option chosen explicitly | analyst path blocked only by OpenRouter free-pool 429s, not by code; evidence assembled honestly | human (provisional-status approval)
 - 2026-10-17 | G3 → EVIDENCED (all four roles live-verified; see SCOPE gate line) — still awaiting explicit human sign-off before marking PASSED | straight to PASSED | sign-off is a human judgement call by the operating rules; every accept has run code + a persisted Neon run record behind it | agent applying human's standing gate discipline
-- 2026-10-17 | **G3 PASSED with human sign-off** ("G3 passed", in response to the attempt-10 evidence summary) | — | gate condition met: researcher within allowlist, analyst explanation drafted live, critic runs once, injected defect caught, revision/qualification handled | **human**
-- 2026-10-20 | UI phase move-in recorded (human): interactive Next.js site in `website/` on the real backend; CORS for localhost dev only.
-- 2026-10-20 | Human-supplied `logo+tagline.png` becomes the single logo asset (rendered via LogoBanner; manual tagline text removed everywhere) | one source of truth for the lockup; human supplied the asset | human
+- 2026-10-17 | G3 PASSED with sign-off ("G3 passed", in response to the attempt-10 evidence summary) | — | gate condition met: researcher within allowlist, analyst explanation drafted live, critic runs once, injected defect caught, revision/qualification handled | decision-maker
+- 2026-10-20 | UI phase move-in recorded: interactive Next.js site in `website/` on the real backend; CORS for localhost dev only.
+- 2026-10-20 | Human-supplied `logo+tagline.png` becomes the single logo asset (rendered via LogoBanner; manual tagline text removed everywhere) | one source of truth for the lockup; supplied the asset | decision-maker
 - 2026-10-20 | G3 LLM hooks wired onto the HTTP API path (`app/services/llm_hooks.py`): same four hooks as the probe, two-pool config, paced transient retry, loud 503 when enabled-but-misconfigured; API previously ran template-only explanations | API parity with the verified G3 path; misconfiguration must be loud, never a silent fallback | human (asked "yes I want you to wire the llm")
 - 2026-10-20 | API run limiter added (`app/services/rate_limiter.py`): 1 concurrent run, RUN_MIN_GAP_SECONDS (30) between starts, RUNS_PER_DAY (50) per UTC day, 429 + Retry-After; env-tunable | protect the free-model budgets from parallel/rapid-fire UI runs (each run is up to 10 Qloo + up to 9 LLM calls) | human (Q&A choice)
 - 2026-10-20 | Weight sliders use proportional squeeze: total pinned at exactly 100%; raising one slider lowers the others pro-rata, lowering redistributes pro-rata; even-split escape hatch for the all-zero state; step 1% | human Q&A choice over largest-first and cap-only options; engine requires sum=1
