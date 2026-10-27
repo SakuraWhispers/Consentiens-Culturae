@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.decision_engine import SCORING_VERSION as CURRENT_SCORING_VERSION
 from app.integrations.qloo_adapter import FixtureSource
 from app.schemas.brief import DecisionBrief, HardConstraint
 from app.services.persistence import get_engine, get_run_bundle, init_db
@@ -57,6 +58,13 @@ def _engine():
     eng = get_engine("sqlite:///:memory:")
     init_db(eng)
     return eng
+
+
+def test_default_stamp_is_current_scoring_version() -> None:
+    # Omitting the arg exercises the coordinator's default; the label must
+    # always be the current one, not a stale literal.
+    out = run_decision(_engine(), _brief(), FixtureSource(FIXTURES_DIR))
+    assert out["report"]["scoring_version"] == CURRENT_SCORING_VERSION == "v0.2"
 
 
 def test_fixture_run_completes_with_ranks_and_report() -> None:

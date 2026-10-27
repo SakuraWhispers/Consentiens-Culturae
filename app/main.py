@@ -11,6 +11,7 @@ from app.api.routes_runs import RunDeps, get_deps, router
 from app.config import Settings
 from app.integrations.qloo_adapter import FixtureSource, LiveEvidenceSource
 from app.integrations.qloo_client import QlooClient
+from app.services.decision_engine import SCORING_VERSION
 from app.services.persistence import get_engine, init_db
 
 
@@ -18,7 +19,7 @@ def create_app(
     database_url: str | None = None,
     app_mode: str | None = None,
     fixtures_dir: Path | None = None,
-    scoring_version: str = "v0.1",
+    scoring_version: str = SCORING_VERSION,
 ) -> FastAPI:
     settings = Settings.from_env()
     database_url = database_url or settings.database_url

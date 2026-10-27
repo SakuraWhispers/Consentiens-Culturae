@@ -17,6 +17,7 @@ from sqlalchemy.exc import (
 from app.config import Settings
 from app.integrations.qloo_adapter import EvidenceSource
 from app.schemas.brief import AttributeSuggestionRequest, DecisionBrief
+from app.services.decision_engine import SCORING_VERSION
 from app.services.persistence import (
     create_run,
     delete_run,
@@ -63,7 +64,7 @@ class RunRequest(DecisionBrief):
 class RunDeps:
     """Per-app dependencies (plain holder, not a schema)."""
 
-    def __init__(self, engine: Engine, source: EvidenceSource, scoring_version: str = "v0.1") -> None:
+    def __init__(self, engine: Engine, source: EvidenceSource, scoring_version: str = SCORING_VERSION) -> None:
         self.engine = engine
         self.source = source
         self.scoring_version = scoring_version

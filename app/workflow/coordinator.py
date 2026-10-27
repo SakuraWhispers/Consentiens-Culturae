@@ -23,7 +23,7 @@ from app.integrations.qloo_client import QlooError
 from app.schemas.brief import DecisionBrief
 from app.schemas.evidence import EvidenceRecord, make_error_record, stable_evidence_id
 from app.services.criterion_extraction import FORMULAS, extract_raw_values
-from app.services.decision_engine import score_concepts
+from app.services.decision_engine import SCORING_VERSION, score_concepts
 from app.services.evidence_normalizer import normalize_response
 from app.services.robustness import analyze_sensitivity
 from app.services.persistence import (
@@ -41,7 +41,6 @@ from app.services.persistence import (
 from app.workflow.states import RunState
 from app.workflow.transitions import transition
 
-SCORING_VERSION_DEFAULT = "v0.1"
 WORKFLOW_VERSION = "w0.1-g2"
 MAX_LIVE_CALLS_PER_RUN = 10
 # How many evidence ids per concept the analyst may cite (payload size cap).
@@ -783,7 +782,7 @@ def run_decision(
     engine: Engine,
     brief: DecisionBrief,
     source: EvidenceSource,
-    scoring_version: str = SCORING_VERSION_DEFAULT,
+    scoring_version: str = SCORING_VERSION,
     workflow_version: str = WORKFLOW_VERSION,
     max_live_calls: int = MAX_LIVE_CALLS_PER_RUN,
     researcher_fn=None,

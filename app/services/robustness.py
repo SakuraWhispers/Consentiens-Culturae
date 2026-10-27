@@ -12,7 +12,7 @@ import random
 from typing import Any
 
 from app.schemas.brief import HardConstraint, Weights
-from app.services.decision_engine import score_concepts
+from app.services.decision_engine import SCORING_VERSION, score_concepts
 
 MAX_SAMPLES = 1000
 DEFAULT_SEED = 20261016
@@ -76,7 +76,7 @@ def analyze_sensitivity(
     hard_constraints: list[HardConstraint],
     concept_attributes: dict[str, dict[str, str]],
     base_weights: Weights,
-    scoring_version: str = "v0.1",
+    scoring_version: str = SCORING_VERSION,
     seed: int = DEFAULT_SEED,
     n: int = MAX_SAMPLES,
     use_named_fallback: bool = False,

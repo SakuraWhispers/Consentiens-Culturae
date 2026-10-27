@@ -19,6 +19,13 @@ from app.schemas.scoring import (
 
 INSUFFICIENT_COVERAGE_THRESHOLD = settings.insufficient_coverage_threshold
 
+# Stamped label for every run's ranking math. Manual, but single-source:
+# coordinator / main / routes / robustness all import this (pins in
+# tests/unit/test_version_labels.py). v0.2 (2026-10-28): the C4 gate changed
+# on 2026-10-23 — a missing-attribute constraint no longer forces INFEASIBLE;
+# the concept ranks with a notice. v0.1 minted 2026-10-15.
+SCORING_VERSION = "v0.2"
+
 
 class ScoringInputError(ValueError):
     """Raised on malformed scoring input; never silently coerced."""
