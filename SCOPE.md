@@ -10,7 +10,6 @@ Last updated: 2026-10-27.
 
 Consentiens-Culturae helps a small consumer brand compare three competing product concepts for a defined audience and market. It retrieves cultural-affinity evidence from the Qloo API, scores the concepts with transparent deterministic code, has a bounded AI analyst and critic review the explanation, and shows whether the ranking holds when the user's priorities change. It is an early concept-screening aid. It is not a sales forecast and does not replace consumer research.
 
-**Demo category (fixed):** stationery and creative accessories.
 **Target user:** a founder or small team at an independent consumer brand with limited research budget.
 
 ---
@@ -69,7 +68,7 @@ Anything that does not fit one of these four stages, or the UI and persistence t
 
 ## 5. Gates (dated)
 
-Dates are Eastern Daylight Time unless stated. Each gate has an acceptance check. A gate is passed only when the check is run and recorded, not when it "should work."
+Each gate has an acceptance check. A gate is passed only when the check is run and recorded, not when it "should work."
 
 | Gate | Date | Acceptance check | Status |
 |---|---|---|---|
@@ -80,7 +79,7 @@ Dates are Eastern Daylight Time unless stated. Each gate has an acceptance check
 | G4 Sensitivity analysis | Oct 24 | Seeded sampler runs. Top-rank frequency and rank range render. Changing a weight produces a deterministic, explainable change. If this fails, fall back to 3 named weight scenarios. | **PASSED 2026-10-24** — seeded sampler live on deployed runs; tie-aware phrasing; weight-change effect deterministic (tests + deployed report). |
 | G5 Deployed demo | Oct 26 | Backend and frontend deployed. Live Qloo integration verified on the deployed instance (or fixture mode clearly labeled). Works in a fresh browser session. | **PASSED 2026-10-26** — Render backend + Vercel frontend live; real Qloo runs verified on the deployed instance; fresh browser session working. |
 | G6 Feature freeze | Oct 29 | No new features. README, LICENSE, About section, known limitations, demo script, screenshots complete. | **PASSED 2026-10-27 (owner declaration).** Known limitations recorded; `docs/demo-script.md` is the one artifact still to write before submission. |
-| Submission | Oct 30, 11:45 pm EDT | Repository public with license visible in About. Demo link live. Description accurately describes what is implemented. | **PASSED 2026-10-27 (owner declaration).** Repo public + deployed demo live; submission-form description to be finalized at submit. |
+| Submission | Oct 30, 11:45 pm EDT | Repository public with license visible in About. Demo link live. Description accurately describes what is implemented. | **PASSED 2026-10-27 (declaration).** Repo public + deployed demo live; submission-form description to be finalized at submit. |
 
 **Judging period:** Nov 2 to Nov 16. Winners announced around Nov 23. The deployed demo must remain available through Nov 16.
 
@@ -115,7 +114,6 @@ If an item displaces nothing and is not on the in-scope table, it is out of scop
 
 ## 7. Evaluation scope (what must be measured, and what we will not claim)
 
-Measured on a fixed set of 6 synthetic-but-realistic briefs with controlled fixtures:
 
 - Baseline A: LLM-only ranking
 - Baseline B: Qloo evidence + deterministic scoring (no critic, no sensitivity)
