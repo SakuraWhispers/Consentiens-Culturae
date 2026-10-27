@@ -2,6 +2,17 @@
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+
+    _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+    if _ENV_PATH.exists():
+        load_dotenv(_ENV_PATH, override=False)
+except Exception:
+    # Never fail app import just because dotenv is missing
+    pass
 
 
 def _env(name: str, default: str | None = None) -> str | None:

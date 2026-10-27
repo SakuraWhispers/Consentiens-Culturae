@@ -19,6 +19,8 @@ dependencies = [
     "psycopg[binary]==3.2.*",
     # uvicorn[standard]: the API server, needed in prod (Render) not just dev
     "uvicorn[standard]==0.32.*",
+    # python-dotenv: load local .env for dev (no secrets committed)
+    "python-dotenv>=1.0.1",
 ]
 
 [project.optional-dependencies]

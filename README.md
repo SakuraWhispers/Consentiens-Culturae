@@ -14,8 +14,11 @@ whenever you want to test. Open two terminals.
 **1 · Backend (port 8000)** — from the repository root:
 
 ```powershell
-Get-Content .env | ForEach-Object { if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') } }; .\.venv\Scripts\python.exe -m uvicorn app.main:serve --factory --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:serve --factory --port 8000
 ```
+
+With `.env` loaded automatically via `python-dotenv` (set `LLM_ENABLED=true`
+and keys in `.env`). Render still injects env vars directly.
 
 **2 · Frontend (port 3000)** — in a second terminal:
 
@@ -46,7 +49,7 @@ cd website; npm run build                       # production build of the site
 
 ## What it does
 
-1. **Research** — a retrieval plan (two allowlisted Qloo endpoints) becomes
+1. **Research** — a retrieval plan (three allowlisted Qloo endpoints: search, tags, insights) becomes
    evidence records.
 2. **Scoring** — deterministic code turns the evidence into four criterion
    scores, four weights and a hard-constraint gate. No LLM touches a number.
