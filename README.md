@@ -20,7 +20,7 @@ It is an early screening aid. It is not a sales forecast, does not estimate mark
 - A Next.js interface for entering the brief and reading the report, including an evidence drawer and a list of limitations.
 - An offline test suite (262 tests, no network or keys needed).
 
-Not built, and out of scope (see [SCOPE.md](SCOPE.md) §4): accounts, run history, chat, vector search or RAG over documents, demographic scoring, sales or market-size estimates.
+Not built, and out of scope (see [SCOPE.md](SCOPE.md) : accounts, run history, chat, vector search or RAG over documents, demographic scoring, sales or market-size estimates.
 
 ## Demo mode and live mode
 
